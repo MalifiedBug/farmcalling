@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FarmCalling | Vobiz Voice Automation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/feather-icons"></script>
+  <style>
+    body { background-color: #0b0f17; color: #f9fafb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .card { background-color: #111827; border: 1px solid #1f2937; }
+    .btn-primary { background-color: #2563eb; color: #ffffff; }
+    .btn-primary:hover { background-color: #1d4ed8; }
+    .tab-btn.active { border-bottom: 2px solid #2563eb; color: #60a5fa; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Header -->
+  <header class="border-b border-gray-800 bg-[#0f172a] px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <span class="text-2xl">🌾</span>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight">FarmCalling</h1>
+        <p class="text-xs text-gray-400">Automated Outbound Voice Platform powered by <strong>Vobiz API</strong></p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-4">
+      <span id="server-status" class="px-2.5 py-1 text-xs rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span> Vercel Serverless Ready
+      </span>
+      <span id="account-badge" class="px-2.5 py-1 text-xs rounded-full bg-blue-950 text-blue-300 border border-blue-800">
+        Checking Vobiz...
+      </span>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="bg-[#111827] border-b border-gray-800 px-6 flex space-x-8 text-sm">
+    <button onclick="switchTab('dashboard')" id="tab-btn-dashboard" class="tab-btn active py-3 font-medium text-gray-300 hover:text-white flex items-center">
+      <i data-feather="activity" class="w-4 h-4 mr-2"></i> Dashboard
+    </button>
+    <button onclick="switchTab('schedules')" id="tab-btn-schedules" class="tab-btn py-3 font-medium text-gray-400 hover:text-white flex items-center">
+      <i data-feather="clock" class="w-4 h-4 mr-2"></i> Schedules & Campaigns
+    </button>
+    <button onclick="switchTab('audio')" id="tab-btn-audio" class="tab-btn py-3 font-medium text-gray-400 hover:text-white flex items-center">
+      <i data-feather="mic" class="w-4 h-4 mr-2"></i> Audio Studio
+    </button>
+    <button onclick="switchTab('history')" id="tab-btn-history" class="tab-btn py-3 font-medium text-gray-400 hover:text-white flex items-center">
+      <i data-feather="list" class="w-4 h-4 mr-2"></i> Call History (CDR)
+    </button>
+    <button onclick="switchTab('settings')" id="tab-btn-settings" class="tab-btn py-3 font-medium text-gray-400 hover:text-white flex items-center">
+      <i data-feather="settings" class="w-4 h-4 mr-2"></i> Settings
+    </button>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
+
+    <!-- TAB 1: DASHBOARD -->
+    <section id="tab-dashboard" class="space-y-6">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div class="card p-4 rounded-xl">
+          <p class="text-xs text-gray-400">Total Outbound Calls</p>
+          <p id="stat-total" class="text-2xl font-bold mt-1">0</p>
+        </div>
+        <div class="card p-4 rounded-xl">
+          <p class="text-xs text-gray-400">Completed Calls</p>
+          <p id="stat-completed" class="text-2xl font-bold text-emerald-400 mt-1">0</p>
+        </div>
+        <div class="card p-4 rounded-xl">
+          <p class="text-xs text-gray-400">Failed / Busy</p>
+          <p id="stat-failed" class="text-2xl font-bold text-rose-400 mt-1">0</p>
+        </div>
+        <div class="card p-4 rounded-xl">
+          <p class="text-xs text-gray-400">Total Duration</p>
+          <p id="stat-duration" class="text-2xl font-bold mt-1">0s</p>
+        </div>
+        <div class="card p-4 rounded-xl">
+          <p class="text-xs text-gray-400">Active Schedules</p>
+          <p id="stat-schedules" class="text-2xl font-bold text-blue-400 mt-1">0</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Instant Dialer Card -->
+        <div class="card p-6 rounded-xl space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold flex items-center"><i data-feather="phone-outgoing" class="w-5 h-5 mr-2 text-blue-400"></i> Instant Call Launcher</h2>
+            <span class="text-xs text-gray-400">1-Click Live Dial</span>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Destination Phone Number (E.164)</label>
+            <input type="text" id="instant-phone" placeholder="+919876543210 or 14155551234" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Select Audio Prompt</label>
+            <select id="instant-audio-select" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+              <option value="">[System Default TTS Prompt]</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Or Custom Voice Message (TTS)</label>
+            <textarea id="instant-tts" rows="2" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="Hello from FarmCalling. Have a productive day!"></textarea>
+          </div>
+          <button onclick="triggerInstantCall()" class="w-full btn-primary py-2.5 rounded-lg text-sm font-medium flex items-center justify-center">
+            <i data-feather="phone-call" class="w-4 h-4 mr-2"></i> Dial Number Now
+          </button>
+          <div id="instant-result" class="hidden text-xs p-3 rounded-lg"></div>
+        </div>
+
+        <!-- Recent Activity Stream -->
+        <div class="card p-6 rounded-xl space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold flex items-center"><i data-feather="list" class="w-5 h-5 mr-2 text-indigo-400"></i> Recent Calls</h2>
+            <button onclick="loadDashboard()" class="text-xs text-blue-400 hover:underline">Refresh</button>
+          </div>
+          <div id="recent-calls-list" class="space-y-3 overflow-y-auto max-h-72">
+            <p class="text-xs text-gray-500">Loading call activity...</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: SCHEDULES -->
+    <section id="tab-schedules" class="hidden space-y-6">
+      <div class="card p-6 rounded-xl space-y-4">
+        <h2 class="text-lg font-semibold flex items-center"><i data-feather="plus-circle" class="w-5 h-5 mr-2 text-blue-400"></i> Create New Call Schedule</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Campaign Name</label>
+            <input type="text" id="sched-name" placeholder="Morning Weather Alert" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Recipient Number(s)</label>
+            <input type="text" id="sched-to" placeholder="+919876543210 (or separate with <)" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Schedule Type</label>
+            <select id="sched-type" onchange="updateSchedInputs()" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+              <option value="once">Specific Date & Time (One-Off)</option>
+              <option value="interval">Repeating Interval (Every X)</option>
+              <option value="cron">Daily / Cron Timetable</option>
+            </select>
+          </div>
+          <div id="sched-input-box" class="md:col-span-2">
+            <!-- Dynamically populated based on schedule type -->
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-300 mb-1">Audio Prompt</label>
+          <select id="sched-audio-select" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm"></select>
+        </div>
+
+        <button onclick="saveSchedule()" class="btn-primary px-6 py-2 rounded-lg text-sm font-medium">Save & Activate Schedule</button>
+      </div>
+
+      <div class="card p-6 rounded-xl space-y-4">
+        <h3 class="text-base font-semibold">Active Campaigns & Schedules</h3>
+        <div id="schedules-table" class="overflow-x-auto">
+          <p class="text-xs text-gray-500">Loading schedules...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: AUDIO STUDIO -->
+    <section id="tab-audio" class="hidden space-y-6">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Microphone Recording -->
+        <div class="card p-6 rounded-xl space-y-4">
+          <h2 class="text-lg font-semibold flex items-center"><i data-feather="mic" class="w-5 h-5 mr-2 text-rose-400"></i> Record via Microphone</h2>
+          <input type="text" id="mic-name" placeholder="Recording Name (e.g. Frost Warning)" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+          <div class="flex items-center space-x-3">
+            <button id="btn-record" onclick="toggleRecording()" class="px-4 py-2 bg-rose-600 hover:bg-rose-700 rounded-lg text-sm font-medium flex items-center">
+              <span id="rec-dot" class="w-2.5 h-2.5 rounded-full bg-white mr-2"></span> <span id="rec-text">Start Recording</span>
+            </button>
+            <span id="rec-timer" class="text-xs text-gray-400">00:00</span>
+          </div>
+          <audio id="rec-preview" controls class="w-full hidden mt-2"></audio>
+          <button id="btn-save-rec" onclick="saveRecordedAudio()" class="hidden btn-primary px-4 py-2 rounded-lg text-sm font-medium">Save Recording to Library</button>
+        </div>
+
+        <!-- File Upload -->
+        <div class="card p-6 rounded-xl space-y-4">
+          <h2 class="text-lg font-semibold flex items-center"><i data-feather="upload-cloud" class="w-5 h-5 mr-2 text-blue-400"></i> Upload Audio File (MP3 / WAV)</h2>
+          <input type="text" id="upload-name" placeholder="Audio Label" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+          <input type="file" id="upload-file" accept="audio/mp3,audio/wav,audio/mpeg" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+          <button onclick="uploadAudioFile()" class="btn-primary px-4 py-2 rounded-lg text-sm font-medium">Upload Audio</button>
+        </div>
+      </div>
+
+      <!-- Audio Library List -->
+      <div class="card p-6 rounded-xl space-y-4">
+        <h3 class="text-base font-semibold">Saved Audio Library</h3>
+        <div id="audio-library-list" class="space-y-3">
+          <p class="text-xs text-gray-500">Loading audio assets...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: CALL HISTORY (CDR) -->
+    <section id="tab-history" class="hidden space-y-6">
+      <div class="card p-6 rounded-xl space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold flex items-center"><i data-feather="file-text" class="w-5 h-5 mr-2 text-blue-400"></i> Call Detail Records (CDR)</h2>
+          <button onclick="loadCallHistory()" class="text-xs text-blue-400 hover:underline">Refresh Records</button>
+        </div>
+        <div id="call-history-table" class="overflow-x-auto">
+          <p class="text-xs text-gray-500">Loading call logs...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: SETTINGS -->
+    <section id="tab-settings" class="hidden space-y-6">
+      <div class="card p-6 rounded-xl space-y-4">
+        <h2 class="text-lg font-semibold flex items-center"><i data-feather="sliders" class="w-5 h-5 mr-2 text-blue-400"></i> Vobiz API & Telephony Settings</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Account Auth ID (X-Auth-ID)</label>
+            <input type="text" id="setting-auth-id" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Account Auth Token (X-Auth-Token)</label>
+            <input type="password" id="setting-auth-token" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Outbound Caller ID (From)</label>
+            <input type="text" id="setting-caller-id" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Public Webhook Base URL</label>
+            <input type="text" id="setting-webhook-url" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono">
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-3 pt-2">
+          <button onclick="saveSettings()" class="btn-primary px-5 py-2 rounded-lg text-sm font-medium">Save Settings</button>
+          <button onclick="verifyConnection()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 px-5 py-2 rounded-lg text-sm font-medium flex items-center">
+            <i data-feather="check-circle" class="w-4 h-4 mr-2 text-emerald-400"></i> Test Connection
+          </button>
+          <button onclick="createVobizApp()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg text-sm font-medium">
+            Sync Vobiz Application
+          </button>
+        </div>
+        <div id="settings-result" class="hidden text-xs p-3 rounded-lg mt-2"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Script logic -->
+  <script>
+    feather.replace();
+
+    let recordedBlob = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let recTimerInterval = null;
+    let recSeconds = 0;
+
+    function switchTab(tabId) {
+      document.querySelectorAll('section[id^="tab-"]').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active', 'text-white'));
+      document.getElementById('tab-' + tabId).classList.remove('hidden');
+      document.getElementById('tab-btn-' + tabId).classList.add('active', 'text-white');
+      feather.replace();
+
+      if (tabId === 'dashboard') loadDashboard();
+      if (tabId === 'schedules') loadSchedules();
+      if (tabId === 'audio') loadAudioLibrary();
+      if (tabId === 'history') loadCallHistory();
+      if (tabId === 'settings') loadSettings();
+    }
+
+    async function loadDashboard() {
+      try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+        document.getElementById('stat-total').innerText = data.total_calls;
+        document.getElementById('stat-completed').innerText = data.completed_calls;
+        document.getElementById('stat-failed').innerText = data.failed_calls;
+        document.getElementById('stat-duration').innerText = data.total_duration_sec + 's';
+        document.getElementById('stat-schedules').innerText = data.active_schedules;
+
+        const callsRes = await fetch('/api/calls?limit=8');
+        const calls = await callsRes.json();
+        const container = document.getElementById('recent-calls-list');
+        if (calls.length === 0) {
+          container.innerHTML = '<p class="text-xs text-gray-500">No calls logged yet.</p>';
+        } else {
+          container.innerHTML = calls.map(c => `
+            <div class="flex items-center justify-between p-3 bg-[#1e293b] rounded-lg text-xs">
+              <div>
+                <span class="font-medium text-white">${c.to_number}</span>
+                <span class="text-gray-400 ml-2">(${c.schedule_name || 'Instant'})</span>
+                <p class="text-[10px] text-gray-500">${c.initiated_at.replace('T', ' ').slice(0, 19)}</p>
+              </div>
+              <div class="text-right">
+                <span class="px-2 py-0.5 rounded text-[10px] ${c.status === 'completed' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-gray-800 text-gray-300'}">${c.status.toUpperCase()}</span>
+                <p class="text-[10px] text-gray-400 mt-1">${c.duration}s</p>
+              </div>
+            </div>
+          `).join('');
+        }
+
+        // populate audio select
+        loadAudioDropdowns();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function loadAudioDropdowns() {
+      try {
+        const res = await fetch('/api/audio');
+        const assets = await res.json();
+        const opts = '<option value="">[System Default Audio / TTS]</option>' + assets.map(a => `<option value="${a.id}">${a.name} (${a.source_type})</option>`).join('');
+        document.getElementById('instant-audio-select').innerHTML = opts;
+        const sSelect = document.getElementById('sched-audio-select');
+        if (sSelect) sSelect.innerHTML = opts;
+      } catch (e) {}
+    }
+
+    async function triggerInstantCall() {
+      const phone = document.getElementById('instant-phone').value.trim();
+      const audioId = document.getElementById('instant-audio-select').value;
+      const tts = document.getElementById('instant-tts').value.trim();
+      const resBox = document.getElementById('instant-result');
+
+      if (!phone) {
+        alert('Please enter a phone number.');
+        return;
+      }
+
+      resBox.className = 'text-xs p-3 rounded-lg bg-blue-950 text-blue-300 border border-blue-800';
+      resBox.innerText = 'Dialing via Vobiz...';
+      resBox.classList.remove('hidden');
+
+      try {
+        const res = await fetch('/api/calls/instant', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ to_number: phone, audio_id: audioId, tts_message: tts })
+        });
+        const data = await res.json();
+        if (data.success) {
+          resBox.className = 'text-xs p-3 rounded-lg bg-emerald-950 text-emerald-400 border border-emerald-800';
+          resBox.innerText = 'Call placed successfully! Request UUID: ' + (data.data.request_uuid || data.data.api_id);
+          loadDashboard();
+        } else {
+          resBox.className = 'text-xs p-3 rounded-lg bg-rose-950 text-rose-400 border border-rose-800';
+          resBox.innerText = 'Call failed: ' + data.message;
+        }
+      } catch (e) {
+        resBox.className = 'text-xs p-3 rounded-lg bg-rose-950 text-rose-400 border border-rose-800';
+        resBox.innerText = 'Network error: ' + e.message;
+      }
+    }
+
+    function updateSchedInputs() {
+      const type = document.getElementById('sched-type').value;
+      const box = document.getElementById('sched-input-box');
+      if (type === 'once') {
+        const now = new Date(Date.now() + 5*60000).toISOString().slice(0, 16);
+        box.innerHTML = `
+          <label class="block text-xs font-medium text-gray-300 mb-1">Target Date & Time</label>
+          <input type="datetime-local" id="sched-datetime" value="${now}" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+        `;
+      } else if (type === 'interval') {
+        box.innerHTML = `
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-medium text-gray-300 mb-1">Frequency</label>
+              <input type="number" id="sched-interval-val" value="30" min="1" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-300 mb-1">Unit</label>
+              <select id="sched-interval-unit" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+                <option value="minutes">Minutes</option>
+                <option value="hours">Hours</option>
+                <option value="days">Days</option>
+              </select>
+            </div>
+          </div>
+        `;
+      } else {
+        box.innerHTML = `
+          <label class="block text-xs font-medium text-gray-300 mb-1">Cron Expression (e.g. 0 9 * * *)</label>
+          <input type="text" id="sched-cron" value="0 9 * * *" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+        `;
+      }
+    }
+    updateSchedInputs();
+
+    async function saveSchedule() {
+      const name = document.getElementById('sched-name').value.trim();
+      const to = document.getElementById('sched-to').value.trim();
+      const type = document.getElementById('sched-type').value;
+      const audioId = document.getElementById('sched-audio-select').value;
+
+      if (!name || !to) return alert('Please enter campaign name and recipient number.');
+
+      let body = { name, to_number: to, schedule_type: type, audio_id: audioId };
+      if (type === 'once') {
+        body.scheduled_datetime = document.getElementById('sched-datetime').value;
+      } else if (type === 'interval') {
+        body.interval_value = parseInt(document.getElementById('sched-interval-val').value);
+        body.interval_unit = document.getElementById('sched-interval-unit').value;
+      } else {
+        body.cron_expression = document.getElementById('sched-cron').value;
+      }
+
+      const res = await fetch('/api/schedules', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+      if (res.ok) {
+        alert('Schedule created successfully!');
+        loadSchedules();
+      }
+    }
+
+    async function loadSchedules() {
+      const res = await fetch('/api/schedules');
+      const data = await res.json();
+      const box = document.getElementById('schedules-table');
+      if (data.length === 0) {
+        box.innerHTML = '<p class="text-xs text-gray-500">No active campaigns found.</p>';
+        return;
+      }
+      box.innerHTML = `
+        <table class="w-full text-left text-xs">
+          <thead class="border-b border-gray-800 text-gray-400">
+            <tr>
+              <th class="py-2">Name</th>
+              <th>Destination</th>
+              <th>Type</th>
+              <th>Timing</th>
+              <th>Status</th>
+              <th>Runs</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            ${data.map(s => `
+              <tr>
+                <td class="py-2.5 font-medium text-white">${s.name}</td>
+                <td><code>${s.to_number}</code></td>
+                <td><span class="uppercase font-mono">${s.schedule_type}</span></td>
+                <td>${s.schedule_type === 'once' ? (s.scheduled_datetime || '').replace('T', ' ') : (s.schedule_type === 'interval' ? `Every ${s.interval_value} ${s.interval_unit}` : s.cron_expression)}</td>
+                <td><span class="px-2 py-0.5 rounded text-[10px] ${s.status === 'active' ? 'bg-emerald-950 text-emerald-400' : 'bg-gray-800 text-gray-400'}">${s.status}</span></td>
+                <td>${s.total_runs}</td>
+                <td>
+                  <button onclick="runScheduleNow('${s.id}')" class="text-blue-400 hover:underline mr-2">Run</button>
+                  <button onclick="deleteSchedule('${s.id}')" class="text-rose-400 hover:underline">Delete</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function runScheduleNow(id) {
+      if (!confirm('Execute this schedule call now?')) return;
+      const res = await fetch(`/api/schedules/${id}/run`, { method: 'POST' });
+      alert(res.ok ? 'Call dispatched!' : 'Trigger failed');
+      loadSchedules();
+    }
+
+    async function deleteSchedule(id) {
+      if (!confirm('Delete this schedule?')) return;
+      await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
+      loadSchedules();
+    }
+
+    // Audio recording logic
+    async function toggleRecording() {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        clearInterval(recTimerInterval);
+        document.getElementById('rec-text').innerText = 'Start Recording';
+        document.getElementById('btn-record').classList.remove('bg-gray-700');
+        document.getElementById('btn-record').classList.add('bg-rose-600');
+      } else {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.onstop = () => {
+          recordedBlob = new Blob(audioChunks, { type: 'audio/wav' });
+          const audioUrl = URL.createObjectURL(recordedBlob);
+          const p = document.getElementById('rec-preview');
+          p.src = audioUrl;
+          p.classList.remove('hidden');
+          document.getElementById('btn-save-rec').classList.remove('hidden');
+        };
+        mediaRecorder.start();
+        recSeconds = 0;
+        recTimerInterval = setInterval(() => {
+          recSeconds++;
+          const m = String(Math.floor(recSeconds / 60)).padStart(2, '0');
+          const s = String(recSeconds % 60).padStart(2, '0');
+          document.getElementById('rec-timer').innerText = `${m}:${s}`;
+        }, 1000);
+        document.getElementById('rec-text').innerText = 'Stop Recording';
+        document.getElementById('btn-record').classList.add('bg-gray-700');
+        document.getElementById('btn-record').classList.remove('bg-rose-600');
+      }
+    }
+
+    async function saveRecordedAudio() {
+      if (!recordedBlob) return;
+      const name = document.getElementById('mic-name').value.trim() || 'Recorded Prompt';
+      const formData = new FormData();
+      formData.append('audio_file', recordedBlob, 'mic_record.wav');
+      formData.append('name', name);
+      const res = await fetch('/api/audio/upload', { method: 'POST', body: formData });
+      if (res.ok) {
+        alert('Voice recording saved to library!');
+        loadAudioLibrary();
+      }
+    }
+
+    async function uploadAudioFile() {
+      const f = document.getElementById('upload-file').files[0];
+      const name = document.getElementById('upload-name').value.trim();
+      if (!f) return alert('Select an MP3 or WAV audio file.');
+      const formData = new FormData();
+      formData.append('audio_file', f);
+      formData.append('name', name || f.name);
+      const res = await fetch('/api/audio/upload', { method: 'POST', body: formData });
+      if (res.ok) {
+        alert('Audio uploaded successfully!');
+        loadAudioLibrary();
+      }
+    }
+
+    async function loadAudioLibrary() {
+      const res = await fetch('/api/audio');
+      const data = await res.json();
+      const list = document.getElementById('audio-library-list');
+      if (data.length === 0) {
+        list.innerHTML = '<p class="text-xs text-gray-500">No audio assets in library.</p>';
+        return;
+      }
+      list.innerHTML = data.map(a => `
+        <div class="flex items-center justify-between p-3 bg-[#1e293b] rounded-lg text-xs">
+          <div>
+            <p class="font-medium text-white">${a.name}</p>
+            <p class="text-[10px] text-gray-400">Type: ${a.source_type} | Format: ${a.mime_type}</p>
+          </div>
+          <div class="flex items-center space-x-3">
+            <audio src="/audio/${a.id}" controls class="h-8"></audio>
+            <button onclick="deleteAudio('${a.id}')" class="text-rose-400 hover:underline">Delete</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function deleteAudio(id) {
+      if (!confirm('Delete audio?')) return;
+      await fetch(`/api/audio/${id}`, { method: 'DELETE' });
+      loadAudioLibrary();
+    }
+
+    async function loadCallHistory() {
+      const res = await fetch('/api/calls?limit=50');
+      const data = await res.json();
+      const box = document.getElementById('call-history-table');
+      if (data.length === 0) {
+        box.innerHTML = '<p class="text-xs text-gray-500">No calls in history.</p>';
+        return;
+      }
+      box.innerHTML = `
+        <table class="w-full text-left text-xs">
+          <thead class="border-b border-gray-800 text-gray-400">
+            <tr>
+              <th class="py-2">Time</th>
+              <th>Destination</th>
+              <th>Caller ID</th>
+              <th>Campaign</th>
+              <th>Status</th>
+              <th>Duration</th>
+              <th>Hangup Cause</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            ${data.map(c => `
+              <tr>
+                <td class="py-2 font-mono text-[11px] text-gray-400">${c.initiated_at.replace('T', ' ').slice(0, 19)}</td>
+                <td class="font-medium text-white">${c.to_number}</td>
+                <td>${c.from_number}</td>
+                <td>${c.schedule_name || 'Instant'}</td>
+                <td><span class="px-2 py-0.5 rounded text-[10px] ${c.status === 'completed' ? 'bg-emerald-950 text-emerald-400' : 'bg-gray-800 text-gray-400'}">${c.status}</span></td>
+                <td>${c.duration}s</td>
+                <td>${c.hangup_cause || '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function loadSettings() {
+      const res = await fetch('/api/settings');
+      const data = await res.json();
+      document.getElementById('setting-auth-id').value = data.auth_id || '';
+      document.getElementById('setting-auth-token').value = data.auth_token || '';
+      document.getElementById('setting-caller-id').value = data.caller_id || '';
+      document.getElementById('setting-webhook-url').value = data.webhook_base_url || window.location.origin;
+
+      if (data.auth_id) {
+        document.getElementById('account-badge').innerText = `Vobiz: ${data.auth_id}`;
+      }
+    }
+
+    async function saveSettings() {
+      const body = {
+        auth_id: document.getElementById('setting-auth-id').value.trim(),
+        auth_token: document.getElementById('setting-auth-token').value.trim(),
+        caller_id: document.getElementById('setting-caller-id').value.trim(),
+        webhook_base_url: document.getElementById('setting-webhook-url').value.trim()
+      };
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+      alert(res.ok ? 'Settings saved!' : 'Failed to save');
+      loadSettings();
+    }
+
+    async function verifyConnection() {
+      const box = document.getElementById('settings-result');
+      box.className = 'text-xs p-3 rounded-lg bg-blue-950 text-blue-300 border border-blue-800';
+      box.innerText = 'Verifying Vobiz credentials...';
+      box.classList.remove('hidden');
+
+      const res = await fetch('/api/settings/verify', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        box.className = 'text-xs p-3 rounded-lg bg-emerald-950 text-emerald-400 border border-emerald-800';
+        box.innerText = `Verified! Account: ${data.data.account.name || data.data.account.auth_id} | Balance: ${data.data.balance} ${data.data.currency}`;
+      } else {
+        box.className = 'text-xs p-3 rounded-lg bg-rose-950 text-rose-400 border border-rose-800';
+        box.innerText = 'Verification failed: ' + data.message;
+      }
+    }
+
+    async function createVobizApp() {
+      const res = await fetch('/api/settings/create-app', { method: 'POST' });
+      const data = await res.json();
+      alert(data.success ? `Vobiz App Created! App ID: ${data.data.app_id}` : `Failed: ${data.message}`);
+    }
+
+    // Initialize on load
+    loadDashboard();
+    loadSettings();
+  </script>
+</body>
+</html>
