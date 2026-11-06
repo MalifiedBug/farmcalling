@@ -7,4 +7,6 @@ __pycache__/
 data/*.db
 data/audio/*
 !data/audio/.gitkeep
+.agents/
+skills-lock.json
 

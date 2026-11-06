@@ -158,11 +158,11 @@ def execute_call_job(schedule_id: str):
             next_run = job.next_run_time.isoformat()
         update_schedule_run_info(schedule_id, last_run_at=now_iso, next_run_at=next_run)
 
-def register_schedule_job(schedule_id: str):
+def register_schedule_job(schedule_id: str, schedule_data: Optional[Dict[str, Any]] = None):
     """
     Registers or updates an active schedule in APScheduler.
     """
-    schedule = get_schedule(schedule_id)
+    schedule = schedule_data or get_schedule(schedule_id)
     if not schedule or schedule["status"] != "active":
         return
 
@@ -238,11 +238,11 @@ def register_schedule_job(schedule_id: str):
         logger.error(f"Failed to register schedule {schedule_id}: {e}")
 
 def reload_all_schedules():
-    """Syncs all active schedules from SQLite into APScheduler."""
+    """Syncs all active schedules from Database into APScheduler."""
     active_list = get_schedules(status_filter="active")
     logger.info(f"Reloading {len(active_list)} active schedules into APScheduler...")
     for item in active_list:
-        register_schedule_job(item["id"])
+        register_schedule_job(item["id"], schedule_data=item)
 
 def trigger_call_now(
     to_number: str,
