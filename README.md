@@ -41,9 +41,11 @@
 
 ---
 
-## 🚀 Deployment to Vercel (Serverless Telephony Engine)
+## 🚀 Deployment to Vercel (Production Serverless Telephony Engine)
 
-The application is completely configured for **1-click zero-config deployment to Vercel**:
+In production, **Vobiz credentials should never be typed into the web browser**. Because serverless platforms like Vercel run ephemeral container instances where `/tmp/` is reset on cold starts, all Vobiz credentials, caller IDs, and base URLs must be configured as **Environment Variables** in Vercel.
+
+When environment variables are present, FarmCalling automatically locks the web settings form to prevent accidental changes, masks sensitive auth tokens, and reads credentials directly from `os.environ`.
 
 ### 1. What's Included for Vercel
 - **`vercel.json`**: Configures the `@vercel/python` builder, route rewrites, and periodic **Vercel Cron** (`* * * * *` calling `/api/cron`).
@@ -51,29 +53,105 @@ The application is completely configured for **1-click zero-config deployment to
 - **Serverless Web Dashboard (`static/index.html`)**: Mobile-ready Tailwind CSS dashboard served at `https://your-project.vercel.app/`.
 - **Serverless Storage Adapter**: Seamlessly operates with `/tmp/farmcalling.db` and `/tmp/audio/` in Vercel's ephemeral serverless environment.
 
-### 2. Deploying via Vercel CLI or GitHub
+---
 
-#### Option A: Using the Vercel CLI
-```bash
-npm i -g vercel
-vercel
-```
+### 2. Required Production Environment Variables
 
-#### Option B: Deploying via GitHub
-1. Push your repository to GitHub.
-2. In the [Vercel Dashboard](https://vercel.com/new), click **Import Project** and select this repository.
-3. Under **Environment Variables**, add:
-   - `VOBIZ_AUTH_ID`: Your Vobiz Auth ID (e.g. `MA_WTGRSXR3`)
-   - `VOBIZ_AUTH_TOKEN`: Your Vobiz Auth Token
-   - `VOBIZ_CALLER_ID`: Your outbound phone number (e.g. `+918065354878`)
-4. Click **Deploy**.
+Configure these variables in your Vercel Project Settings:
 
-Vercel will give you an instant global HTTPS URL (e.g. `https://farmcalling.vercel.app`), which will automatically handle:
-- Web dashboard at `/`
-- Webhook answer endpoint at `/webhook/answer`
-- Webhook hangup endpoint at `/webhook/hangup`
-- Audio streaming at `/audio/{id}`
-- Automated background scheduling via Vercel Cron at `/api/cron`
+| Environment Variable | Required | Description | Example |
+| :--- | :---: | :--- | :--- |
+| `VOBIZ_AUTH_ID` | **Yes** | Your Vobiz Account Auth ID | `MA_WTGRSXR3XXXXXXXX` |
+| `VOBIZ_AUTH_TOKEN` | **Yes** | Your Vobiz Account Auth Token | `4c8928374d6f8a...` |
+| `VOBIZ_CALLER_ID` | **Yes** | Verified Vobiz phone number or DID in E.164 | `+919876543210` |
+| `WEBHOOK_BASE_URL` | *Optional* | Your public Vercel HTTPS URL (auto-detected if omitted) | `https://your-project.vercel.app` |
+| `VOBIZ_APP_NAME` | *Optional* | Name for Vobiz Application registration | `FarmCalling-Voice-App` |
+| `VOBIZ_TIMEZONE` | *Optional* | Application timezone (default: `Asia/Kolkata`) | `Asia/Kolkata` |
+| `VOBIZ_RING_TIMEOUT` | *Optional* | Ring timeout in seconds (default: `30`) | `30` |
+| `VOBIZ_TIME_LIMIT` | *Optional* | Max call duration in seconds (default: `3600`) | `3600` |
+| `VOBIZ_MACHINE_DETECTION` | *Optional* | AMD mode: `false`, `true`, or `hangup` | `false` |
+
+---
+
+### 3. Step-by-Step Directions to Host on Vercel
+
+#### Method A: Deploy via GitHub (Recommended)
+
+1. **Commit and Push Code to GitHub:**
+   Ensure your `.env` is NOT committed (it is already in `.gitignore`):
+   ```bash
+   git add .
+   git commit -m "Configure production environment variables for Vercel"
+   git push origin main
+   ```
+
+2. **Import Repository in Vercel:**
+   - Go to [vercel.com/new](https://vercel.com/new) and log in.
+   - Under **Import Git Repository**, find your `farmcalling` repository and click **Import**.
+
+3. **Set Environment Variables in Vercel:**
+   - In the **Configure Project** screen, expand the **Environment Variables** section.
+   - Add the following:
+     - **Key:** `VOBIZ_AUTH_ID` ➔ **Value:** `Your_Vobiz_Auth_ID`
+     - **Key:** `VOBIZ_AUTH_TOKEN` ➔ **Value:** `Your_Vobiz_Auth_Token`
+     - **Key:** `VOBIZ_CALLER_ID` ➔ **Value:** `+91XXXXXXXXXX`
+     - *(Optional)* **Key:** `WEBHOOK_BASE_URL` ➔ **Value:** `https://your-project.vercel.app`
+   - Select environments: **Production**, **Preview**, and **Development**.
+
+4. **Deploy:**
+   - Click **Deploy**.
+   - Vercel will install the dependencies, build the serverless functions via `@vercel/python`, and generate your global HTTPS production URL (e.g. `https://farmcalling.vercel.app`).
+
+5. **Verify Telephony & Sync Vobiz Application:**
+   - Open your deployed Vercel URL (`https://your-project.vercel.app`).
+   - Navigate to the **Settings** tab:
+     - Notice the **"🔒 Production Environment Active: Vobiz Managed via Environment Variables"** banner. The input fields are securely locked and the Auth Token is masked.
+     - Click **Test Connection** to verify live communication with Vobiz.
+     - Click **Sync Vobiz Application** to automatically register `/webhook/answer` and `/webhook/hangup` on your Vobiz console!
+
+---
+
+#### Method B: Deploy via Vercel CLI
+
+1. **Install Vercel CLI (if not installed):**
+   ```bash
+   npm i -g vercel
+   ```
+
+2. **Link and Add Environment Variables:**
+   ```bash
+   vercel link
+   vercel env add VOBIZ_AUTH_ID production
+   vercel env add VOBIZ_AUTH_TOKEN production
+   vercel env add VOBIZ_CALLER_ID production
+   ```
+
+3. **Deploy to Production:**
+   ```bash
+   vercel --prod
+   ```
+
+---
+
+### 4. Local Development with `.env`
+
+For local development without web settings entry:
+1. Copy the example configuration:
+   ```bash
+   cp .env.example .env
+   ```
+2. Populate your Vobiz credentials inside `.env`:
+   ```bash
+   VOBIZ_AUTH_ID=MA_XXXXXXXXXXXXXXXXXX
+   VOBIZ_AUTH_TOKEN=your_vobiz_auth_token_here
+   VOBIZ_CALLER_ID=+919876543210
+   WEBHOOK_BASE_URL=https://your-ngrok-tunnel.ngrok-free.app
+   ```
+3. Run the local app:
+   ```bash
+   ./run.py
+   ```
+   The application automatically loads `.env` on startup, prioritizing environment variables over any local database entries.
 
 ---
 

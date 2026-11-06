@@ -9,7 +9,7 @@ import socket
 import uvicorn
 import logging
 
-from database import init_db, get_settings, get_call_stats
+from database import init_db, get_settings, get_call_stats, is_vobiz_env_configured
 from scheduler import get_scheduler, reload_all_schedules
 from server import app as fastapi_app
 
@@ -81,7 +81,8 @@ with st.sidebar:
 
     # Vobiz Credentials Status
     if configured:
-        st.markdown(f"🔑 **Vobiz Auth ID:** `{settings.get('auth_id')[:6]}...`")
+        env_badge = " *(env locked)*" if is_vobiz_env_configured() else ""
+        st.markdown(f"🔑 **Vobiz Auth ID:** `{settings.get('auth_id')[:6]}...`{env_badge}")
         if settings.get("caller_id"):
             st.markdown(f"📱 **Caller ID:** `{settings.get('caller_id')}`")
         else:

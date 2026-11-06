@@ -219,6 +219,21 @@
     <section id="tab-settings" class="hidden space-y-6">
       <div class="card p-6 rounded-xl space-y-4">
         <h2 class="text-lg font-semibold flex items-center"><i data-feather="sliders" class="w-5 h-5 mr-2 text-blue-400"></i> Vobiz API & Telephony Settings</h2>
+
+        <!-- Environment Variables Status Banner -->
+        <div id="env-status-banner" class="hidden p-4 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-xs flex items-center justify-between">
+          <div class="space-y-1">
+            <span class="font-semibold text-emerald-200 flex items-center">
+              <i data-feather="shield" class="w-4 h-4 mr-1.5 text-emerald-400"></i>
+              Production Environment Active: Vobiz Managed via Environment Variables
+            </span>
+            <p class="text-gray-400">Credentials (<code class="text-emerald-300">VOBIZ_AUTH_ID</code>, <code class="text-emerald-300">VOBIZ_AUTH_TOKEN</code>, <code class="text-emerald-300">VOBIZ_CALLER_ID</code>) are loaded securely from your environment. Web form editing is locked.</p>
+          </div>
+          <span class="px-2.5 py-1 rounded bg-emerald-900/90 text-emerald-200 text-xs font-mono font-medium border border-emerald-700 whitespace-nowrap ml-4">
+            ENV LOCKED
+          </span>
+        </div>
+
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label class="block text-xs font-medium text-gray-300 mb-1">Account Auth ID (X-Auth-ID)</label>
@@ -242,7 +257,7 @@
         </div>
 
         <div class="flex items-center space-x-3 pt-2">
-          <button onclick="saveSettings()" class="btn-primary px-5 py-2 rounded-lg text-sm font-medium">Save Settings</button>
+          <button id="save-settings-btn" onclick="saveSettings()" class="btn-primary px-5 py-2 rounded-lg text-sm font-medium">Save Settings</button>
           <button onclick="verifyConnection()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 px-5 py-2 rounded-lg text-sm font-medium flex items-center">
             <i data-feather="check-circle" class="w-4 h-4 mr-2 text-emerald-400"></i> Test Connection
           </button>
@@ -614,17 +629,57 @@
     async function loadSettings() {
       const res = await fetch('/api/settings');
       const data = await res.json();
-      document.getElementById('setting-auth-id').value = data.auth_id || '';
-      document.getElementById('setting-auth-token').value = data.auth_token || '';
-      document.getElementById('setting-caller-id').value = data.caller_id || '';
-      document.getElementById('setting-webhook-url').value = data.webhook_base_url || window.location.origin;
+      
+      const authIdInput = document.getElementById('setting-auth-id');
+      const authTokenInput = document.getElementById('setting-auth-token');
+      const callerIdInput = document.getElementById('setting-caller-id');
+      const webhookUrlInput = document.getElementById('setting-webhook-url');
+      const envBanner = document.getElementById('env-status-banner');
+      const saveBtn = document.getElementById('save-settings-btn');
+
+      authIdInput.value = data.auth_id || '';
+      authTokenInput.value = data.auth_token || '';
+      callerIdInput.value = data.caller_id || '';
+      webhookUrlInput.value = data.webhook_base_url || window.location.origin;
+
+      if (data._is_production_env) {
+        if (envBanner) envBanner.classList.remove('hidden');
+        if (data._env_managed_keys && data._env_managed_keys.includes('auth_id')) {
+          authIdInput.disabled = true;
+          authIdInput.classList.add('opacity-60', 'cursor-not-allowed', 'bg-gray-900');
+        }
+        if (data._env_managed_keys && data._env_managed_keys.includes('auth_token')) {
+          authTokenInput.disabled = true;
+          authTokenInput.classList.add('opacity-60', 'cursor-not-allowed', 'bg-gray-900');
+          authTokenInput.placeholder = '•••••••••••••••• (Managed in Environment)';
+        }
+        if (data._env_managed_keys && data._env_managed_keys.includes('caller_id')) {
+          callerIdInput.disabled = true;
+          callerIdInput.classList.add('opacity-60', 'cursor-not-allowed', 'bg-gray-900');
+        }
+        if (data._env_managed_keys && data._env_managed_keys.includes('webhook_base_url')) {
+          webhookUrlInput.disabled = true;
+          webhookUrlInput.classList.add('opacity-60', 'cursor-not-allowed', 'bg-gray-900');
+        }
+        if (saveBtn) {
+          saveBtn.disabled = true;
+          saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
+          saveBtn.title = 'Settings are configured via Environment Variables';
+        }
+      }
 
       if (data.auth_id) {
-        document.getElementById('account-badge').innerText = `Vobiz: ${data.auth_id}`;
+        const envPill = data._is_production_env ? ' (Env)' : '';
+        document.getElementById('account-badge').innerText = `Vobiz: ${data.auth_id}${envPill}`;
       }
     }
 
     async function saveSettings() {
+      const saveBtn = document.getElementById('save-settings-btn');
+      if (saveBtn && saveBtn.disabled) {
+        alert('Credentials are locked to Environment Variables in production mode.');
+        return;
+      }
       const body = {
         auth_id: document.getElementById('setting-auth-id').value.trim(),
         auth_token: document.getElementById('setting-auth-token').value.trim(),
@@ -669,3 +724,4 @@
   </script>
 </body>
 </html>
+

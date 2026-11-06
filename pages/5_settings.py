@@ -6,8 +6,15 @@ import streamlit as st
 import requests
 import json
 import pytz
+import os
 
-from database import get_settings, update_settings
+from database import (
+    get_settings,
+    update_settings,
+    is_setting_env_managed,
+    is_vobiz_env_configured,
+    get_env_managed_keys
+)
 from vobiz_client import VobizClient
 
 st.title("⚙️ System & Telephony Settings")
@@ -26,37 +33,70 @@ tab_vobiz, tab_app, tab_webhook, tab_policy, tab_sim = st.tabs([
 # ----------------- TAB 1: VOBIZ CREDENTIALS -----------------
 with tab_vobiz:
     st.subheader("Vobiz API Authentication")
-    st.markdown("Enter your Vobiz credentials from the [Vobiz Console](https://console.vobiz.ai).")
 
-    with st.form("creds_form"):
-        auth_id = st.text_input(
-            "Account Auth ID (`X-Auth-ID`)",
-            value=current_settings.get("auth_id", ""),
-            placeholder="e.g. MA_XXXXXX"
-        )
-        auth_token = st.text_input(
-            "Account Auth Token (`X-Auth-Token`)",
-            value=current_settings.get("auth_token", ""),
-            type="password",
-            placeholder="Your 32-character Auth Token"
-        )
-        caller_id = st.text_input(
-            "Default Outbound Caller ID (`from`)",
-            value=current_settings.get("caller_id", ""),
-            placeholder="+919876543210 or 14155551234",
-            help="Must be a verified Vobiz phone number or owned DID in E.164 format."
+    env_configured = is_vobiz_env_configured()
+
+    if env_configured:
+        st.success("🔒 **Production Environment Configuration Active**")
+        st.caption(
+            "Vobiz credentials (`VOBIZ_AUTH_ID`, `VOBIZ_AUTH_TOKEN`, `VOBIZ_CALLER_ID`) are managed securely via "
+            "environment variables. Manual web form input is locked to prevent accidental credential leakage or state loss."
         )
 
-        saved = st.form_submit_button("💾 Save Credentials", type="primary")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Vobiz Auth ID", current_settings.get("auth_id", ""), help="Managed via VOBIZ_AUTH_ID")
+        with c2:
+            st.metric("Vobiz Auth Token", "••••••••••••••••", help="Protected in environment variables")
+        with c3:
+            st.metric("Default Caller ID", current_settings.get("caller_id") or "Not configured", help="Managed via VOBIZ_CALLER_ID")
 
-    if saved:
-        update_settings({
-            "auth_id": auth_id.strip(),
-            "auth_token": auth_token.strip(),
-            "caller_id": caller_id.strip()
-        })
-        st.success("Credentials saved to database!")
-        st.rerun()
+        with st.expander("ℹ️ How to update production credentials"):
+            st.markdown("""
+            Credentials are controlled by environment variables:
+            - **On Vercel:** Navigate to **Project Settings → Environment Variables** and update `VOBIZ_AUTH_ID`, `VOBIZ_AUTH_TOKEN`, or `VOBIZ_CALLER_ID`.
+            - **In Local Development:** Edit your `.env` file in the project root:
+              ```bash
+              VOBIZ_AUTH_ID=MA_XXXXXXXXXXXX
+              VOBIZ_AUTH_TOKEN=your_vobiz_auth_token
+              VOBIZ_CALLER_ID=+919876543210
+              ```
+            """)
+    else:
+        st.info(
+            "💡 **Production Best Practice:** Set `VOBIZ_AUTH_ID`, `VOBIZ_AUTH_TOKEN`, and `VOBIZ_CALLER_ID` "
+            "in your environment (or `.env` file) so credentials are never entered or stored in the browser."
+        )
+
+        with st.form("creds_form"):
+            auth_id = st.text_input(
+                "Account Auth ID (`X-Auth-ID`)",
+                value=current_settings.get("auth_id", ""),
+                placeholder="e.g. MA_XXXXXX"
+            )
+            auth_token = st.text_input(
+                "Account Auth Token (`X-Auth-Token`)",
+                value=current_settings.get("auth_token", ""),
+                type="password",
+                placeholder="Your 32-character Auth Token"
+            )
+            caller_id = st.text_input(
+                "Default Outbound Caller ID (`from`)",
+                value=current_settings.get("caller_id", ""),
+                placeholder="+919876543210 or 14155551234",
+                help="Must be a verified Vobiz phone number or owned DID in E.164 format."
+            )
+
+            saved = st.form_submit_button("💾 Save Credentials (Local DB Only)", type="primary")
+
+        if saved:
+            update_settings({
+                "auth_id": auth_id.strip(),
+                "auth_token": auth_token.strip(),
+                "caller_id": caller_id.strip()
+            })
+            st.success("Credentials saved to local database!")
+            st.rerun()
 
     st.markdown("---")
     st.markdown("#### Test Vobiz Connection")
@@ -82,7 +122,7 @@ with tab_vobiz:
                 if nums:
                     st.write(f"**Owned Phone Numbers ({len(nums)}):** {', '.join(nums)}")
                     if not current_settings.get("caller_id") and nums:
-                        st.info(f"💡 Suggestion: You can set `{nums[0]}` as your default caller ID.")
+                        st.info(f"💡 Suggestion: You can set `{nums[0]}` as your default caller ID in your environment.")
             else:
                 status_box.update(label="❌ Connection Failed", state="error", expanded=True)
                 st.error(msg)
@@ -157,19 +197,25 @@ with tab_webhook:
     st.subheader("Webhook Public Base URL")
     st.markdown("Vobiz needs an **HTTPS URL** to fetch your call instructions (`answer_url`) and stream audio (`/audio/{id}`).")
 
-    with st.form("webhook_form"):
-        webhook_base = st.text_input(
-            "Public Webhook Base URL",
-            value=current_settings.get("webhook_base_url", "https://api.example.com"),
-            help="Publicly accessible HTTPS URL pointing to your server port 8000."
-        )
-        save_wh = st.form_submit_button("💾 Save Webhook URL", type="primary")
+    wh_is_env = is_setting_env_managed("webhook_base_url")
+    if wh_is_env:
+        st.success(f"🔒 **Webhook Public Base URL Configured via Environment:** `{current_settings.get('webhook_base_url')}`")
+        if os.environ.get("VERCEL") or os.environ.get("VERCEL_URL"):
+            st.caption("Automatically synced with your Vercel deployment HTTPS domain.")
+    else:
+        with st.form("webhook_form"):
+            webhook_base = st.text_input(
+                "Public Webhook Base URL",
+                value=current_settings.get("webhook_base_url", "https://api.example.com"),
+                help="Publicly accessible HTTPS URL pointing to your server port 8000."
+            )
+            save_wh = st.form_submit_button("💾 Save Webhook URL", type="primary")
 
-    if save_wh:
-        clean_url = webhook_base.strip().rstrip("/")
-        update_settings({"webhook_base_url": clean_url})
-        st.success("Webhook URL updated!")
-        st.rerun()
+        if save_wh:
+            clean_url = webhook_base.strip().rstrip("/")
+            update_settings({"webhook_base_url": clean_url})
+            st.success("Webhook URL updated!")
+            st.rerun()
 
     st.markdown("---")
     # Health check for internal server

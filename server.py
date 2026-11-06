@@ -30,6 +30,9 @@ from database import (
     get_setting,
     get_settings,
     update_settings,
+    is_setting_env_managed,
+    is_vobiz_env_configured,
+    get_env_managed_keys,
     update_call_log_by_uuid,
     create_call_log,
     update_call_log,
@@ -360,12 +363,29 @@ def api_delete_audio(asset_id: str):
 
 @app.get("/api/settings")
 def api_get_settings():
-    return get_settings()
+    s = get_settings()
+    env_keys = get_env_managed_keys()
+    is_prod_env = is_vobiz_env_configured()
+    res = dict(s)
+    if "auth_token" in env_keys:
+        res["auth_token"] = "••••••••••••••••"
+    res["_env_managed_keys"] = env_keys
+    res["_is_production_env"] = is_prod_env
+    return res
 
 @app.post("/api/settings")
 def api_save_settings(data: Dict[str, Any]):
-    update_settings(data)
-    return {"success": True}
+    env_keys = get_env_managed_keys()
+    clean_data = {}
+    for k, v in data.items():
+        if k in env_keys:
+            continue
+        if k == "auth_token" and ("••••" in str(v) or not str(v).strip()):
+            continue
+        clean_data[k] = v
+    if clean_data:
+        update_settings(clean_data)
+    return {"success": True, "updated_keys": list(clean_data.keys())}
 
 @app.post("/api/settings/verify")
 def api_verify_settings():

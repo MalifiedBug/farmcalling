@@ -6,9 +6,109 @@ Provides SQLite storage for settings, audio assets, schedules, and call logs.
 import sqlite3
 import os
 import json
+import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import uuid
+
+logger = logging.getLogger(__name__)
+
+def load_dotenv(dotenv_path: Optional[str] = None):
+    """
+    Parses a local .env file and sets values in os.environ if not already present.
+    Supports comments (#), export statements, and quoted strings.
+    """
+    if dotenv_path is None:
+        dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+
+    if not os.path.exists(dotenv_path):
+        return
+
+    try:
+        with open(dotenv_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip()
+                if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                    val = v[1:-1]
+                else:
+                    val = v
+                if k and k not in os.environ:
+                    os.environ[k] = val
+    except Exception as e:
+        logger.warning(f"Failed to read .env file: {e}")
+
+# Load .env immediately
+load_dotenv()
+
+ENV_SETTING_MAPPINGS = {
+    "auth_id": ["VOBIZ_AUTH_ID"],
+    "auth_token": ["VOBIZ_AUTH_TOKEN"],
+    "caller_id": ["VOBIZ_CALLER_ID", "VOBIZ_FROM_NUMBER"],
+    "webhook_base_url": ["WEBHOOK_BASE_URL", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"],
+    "app_id": ["VOBIZ_APP_ID"],
+    "app_name": ["VOBIZ_APP_NAME"],
+    "ring_timeout": ["VOBIZ_RING_TIMEOUT", "RING_TIMEOUT"],
+    "time_limit": ["VOBIZ_TIME_LIMIT", "TIME_LIMIT"],
+    "machine_detection": ["VOBIZ_MACHINE_DETECTION", "MACHINE_DETECTION"],
+    "timezone": ["VOBIZ_TIMEZONE", "TIMEZONE"],
+    "default_audio_id": ["VOBIZ_DEFAULT_AUDIO_ID"],
+    "tts_default_voice": ["VOBIZ_TTS_VOICE", "TTS_DEFAULT_VOICE"],
+    "tts_default_language": ["VOBIZ_TTS_LANGUAGE", "TTS_DEFAULT_LANGUAGE"]
+}
+
+def get_env_override(key: str) -> Optional[str]:
+    """
+    Checks os.environ (and optionally Streamlit secrets) for an override.
+    Normalizes URLs for webhook_base_url.
+    """
+    var_names = ENV_SETTING_MAPPINGS.get(key, [])
+    for var in var_names:
+        val = os.environ.get(var)
+        if val is not None and str(val).strip():
+            clean_val = str(val).strip()
+            if key == "webhook_base_url":
+                if not clean_val.startswith("http://") and not clean_val.startswith("https://"):
+                    clean_val = f"https://{clean_val}"
+                clean_val = clean_val.rstrip("/")
+            return clean_val
+
+    # Optional fallback to streamlit secrets if running under Streamlit
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            for var in var_names:
+                if var in st.secrets and str(st.secrets[var]).strip():
+                    clean_val = str(st.secrets[var]).strip()
+                    if key == "webhook_base_url":
+                        if not clean_val.startswith("http://") and not clean_val.startswith("https://"):
+                            clean_val = f"https://{clean_val}"
+                        clean_val = clean_val.rstrip("/")
+                    return clean_val
+    except Exception:
+        pass
+
+    return None
+
+def is_setting_env_managed(key: str) -> bool:
+    """Returns True if the setting is provided by an active environment variable."""
+    return get_env_override(key) is not None
+
+def is_vobiz_env_configured() -> bool:
+    """Returns True if essential Vobiz credentials (auth_id and auth_token) come from environment."""
+    return bool(get_env_override("auth_id") and get_env_override("auth_token"))
+
+def get_env_managed_keys() -> List[str]:
+    """Returns list of setting keys currently populated from environment variables."""
+    return [k for k in ENV_SETTING_MAPPINGS if is_setting_env_managed(k)]
 
 def get_db_path() -> str:
     if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
@@ -94,29 +194,21 @@ def init_db():
     )
     """)
 
-    # Seed default settings if empty
     # Seed default settings, respecting environment variables if available
-    auth_id_env = os.environ.get("VOBIZ_AUTH_ID", "")
-    auth_token_env = os.environ.get("VOBIZ_AUTH_TOKEN", "")
-    caller_id_env = os.environ.get("VOBIZ_CALLER_ID", "")
-    vercel_url = os.environ.get("VERCEL_URL") or os.environ.get("WEBHOOK_BASE_URL", "")
-    if vercel_url and not vercel_url.startswith("http"):
-        vercel_url = f"https://{vercel_url}"
-
     default_settings = {
-        "auth_id": auth_id_env,
-        "auth_token": auth_token_env,
-        "caller_id": caller_id_env,
-        "app_id": "",
-        "app_name": "FarmCalling-Vobiz-App",
-        "webhook_base_url": vercel_url or "https://api.example.com",
-        "ring_timeout": "30",
-        "time_limit": "3600",
-        "machine_detection": "false",
-        "timezone": "Asia/Kolkata",
-        "default_audio_id": "",
-        "tts_default_voice": "WOMAN",
-        "tts_default_language": "en-US"
+        "auth_id": get_env_override("auth_id") or "",
+        "auth_token": get_env_override("auth_token") or "",
+        "caller_id": get_env_override("caller_id") or "",
+        "app_id": get_env_override("app_id") or "",
+        "app_name": get_env_override("app_name") or "FarmCalling-Vobiz-App",
+        "webhook_base_url": get_env_override("webhook_base_url") or "https://api.example.com",
+        "ring_timeout": get_env_override("ring_timeout") or "30",
+        "time_limit": get_env_override("time_limit") or "3600",
+        "machine_detection": get_env_override("machine_detection") or "false",
+        "timezone": get_env_override("timezone") or "Asia/Kolkata",
+        "default_audio_id": get_env_override("default_audio_id") or "",
+        "tts_default_voice": get_env_override("tts_default_voice") or "WOMAN",
+        "tts_default_language": get_env_override("tts_default_language") or "en-US"
     }
 
     for key, val in default_settings.items():
@@ -128,34 +220,50 @@ def init_db():
 # --- Settings Helpers ---
 
 def get_settings() -> Dict[str, str]:
+    """
+    Returns settings dictionary.
+    Environment variables ALWAYS take precedence over local database values,
+    ensuring security and stateless operation in production/Vercel.
+    """
     conn = get_connection()
     rows = conn.execute("SELECT key, value FROM settings").fetchall()
     conn.close()
     res = {row["key"]: row["value"] for row in rows}
 
-    # Fallback to environment variables if empty
-    if not res.get("auth_id") and os.environ.get("VOBIZ_AUTH_ID"):
-        res["auth_id"] = os.environ.get("VOBIZ_AUTH_ID")
-    if not res.get("auth_token") and os.environ.get("VOBIZ_AUTH_TOKEN"):
-        res["auth_token"] = os.environ.get("VOBIZ_AUTH_TOKEN")
-    if not res.get("caller_id") and os.environ.get("VOBIZ_CALLER_ID"):
-        res["caller_id"] = os.environ.get("VOBIZ_CALLER_ID")
-    if not res.get("webhook_base_url") or "example.com" in res.get("webhook_base_url", ""):
-        v_url = os.environ.get("VERCEL_URL") or os.environ.get("WEBHOOK_BASE_URL")
-        if v_url:
-            res["webhook_base_url"] = v_url if v_url.startswith("http") else f"https://{v_url}"
+    # Environment variables override database settings
+    for key in ENV_SETTING_MAPPINGS:
+        env_val = get_env_override(key)
+        if env_val is not None:
+            res[key] = env_val
+
     return res
 
 def get_setting(key: str, default: str = "") -> str:
+    """
+    Gets a single setting value.
+    Checks environment variables first, falling back to database and default.
+    """
+    env_val = get_env_override(key)
+    if env_val is not None:
+        return env_val
+
     conn = get_connection()
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     conn.close()
     return row["value"] if row else default
 
 def update_settings(updates: Dict[str, Any]):
+    """
+    Updates settings in the local database.
+    Keys actively managed by environment variables are skipped to prevent
+    overwriting production configuration.
+    """
     conn = get_connection()
     with conn:
         for key, val in updates.items():
+            if is_setting_env_managed(key):
+                logger.info(f"Skipping database update for '{key}' because it is managed by environment variable.")
+                continue
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, str(val))

@@ -4,6 +4,9 @@ __pycache__
 .git
 .gitignore
 .DS_Store
+.env
+.env*.local
 data/*.db
 data/audio/*
 tests/
+

@@ -160,6 +160,51 @@ class TestFarmCalling(unittest.TestCase):
         self.assertIn("completed_calls", stats)
         self.assertIn("active_schedules", stats)
 
+    def test_07_env_settings_and_api(self):
+        from database import is_vobiz_env_configured, is_setting_env_managed, get_env_managed_keys
+        
+        # 1. Set environment variables
+        os.environ["VOBIZ_AUTH_ID"] = "MA_TEST_ENV_999"
+        os.environ["VOBIZ_AUTH_TOKEN"] = "secret_env_token_888"
+        os.environ["VOBIZ_CALLER_ID"] = "+919876543210"
+
+        try:
+            # 2. Verify helper functions
+            self.assertTrue(is_vobiz_env_configured())
+            self.assertTrue(is_setting_env_managed("auth_id"))
+            self.assertTrue(is_setting_env_managed("auth_token"))
+            self.assertTrue(is_setting_env_managed("caller_id"))
+            self.assertIn("auth_id", get_env_managed_keys())
+
+            # 3. Verify get_settings overrides database
+            settings = get_settings()
+            self.assertEqual(settings.get("auth_id"), "MA_TEST_ENV_999")
+            self.assertEqual(settings.get("auth_token"), "secret_env_token_888")
+            self.assertEqual(settings.get("caller_id"), "+919876543210")
+
+            # 4. Verify API response masks token and flags production env
+            res = self.client.get("/api/settings")
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertTrue(data.get("_is_production_env"))
+            self.assertEqual(data.get("auth_id"), "MA_TEST_ENV_999")
+            self.assertEqual(data.get("auth_token"), "••••••••••••••••")
+            self.assertIn("auth_id", data.get("_env_managed_keys", []))
+
+            # 5. Verify update_settings skips overwriting env-managed keys
+            update_settings({
+                "auth_id": "SHOULD_BE_IGNORED",
+                "test_key_custom": "custom_value_ok"
+            })
+            self.assertEqual(get_settings().get("auth_id"), "MA_TEST_ENV_999")
+            self.assertEqual(get_settings().get("test_key_custom"), "custom_value_ok")
+
+        finally:
+            # Clean up test env vars
+            del os.environ["VOBIZ_AUTH_ID"]
+            del os.environ["VOBIZ_AUTH_TOKEN"]
+            del os.environ["VOBIZ_CALLER_ID"]
+
 if __name__ == "__main__":
     unittest.main()
 
