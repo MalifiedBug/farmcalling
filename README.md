@@ -48,7 +48,7 @@ In production, **Vobiz credentials should never be typed into the web browser**.
 When environment variables are present, FarmCalling automatically locks the web settings form to prevent accidental changes, masks sensitive auth tokens, and reads credentials directly from `os.environ`.
 
 ### 1. What's Included for Vercel
-- **`vercel.json`**: Configures the `@vercel/python` builder, route rewrites, and periodic **Vercel Cron** (`* * * * *` calling `/api/cron`).
+- **`vercel.json`**: Configures the `@vercel/python` builder, route rewrites, and a daily **Vercel Cron** (`0 0 * * *` calling `/api/cron`, fully compliant with Vercel Hobby plan). For sub-daily triggers (e.g. every minute) on the free tier, free services like [cron-job.org](https://cron-job.org) can ping `/api/cron`.
 - **`api/index.py`**: ASGI serverless entrypoint routing requests to FastAPI.
 - **Serverless Web Dashboard (`static/index.html`)**: Mobile-ready Tailwind CSS dashboard served at `https://your-project.vercel.app/`.
 - **Serverless Storage Adapter**: Seamlessly operates with `/tmp/farmcalling.db` and `/tmp/audio/` in Vercel's ephemeral serverless environment.
