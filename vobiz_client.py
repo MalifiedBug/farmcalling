@@ -7,10 +7,7 @@ import requests
 import json
 import logging
 from typing import Dict, Any, Optional, List, Tuple
-try:
-    from vobiz import vobizxml
-except ImportError:
-    vobizxml = None
+import xml.sax.saxutils
 
 logger = logging.getLogger(__name__)
 
@@ -203,48 +200,26 @@ class VobizClient:
     @staticmethod
     def generate_play_xml(audio_url: str, loop: int = 1) -> str:
         """
-        Generates VobizXML that plays an audio file with pre-answer stabilization and cuts the call.
-        Includes a 1-second buffer before playback to allow mobile cellular audio channels to stabilize,
-        and a 1-second buffer after playback so the last syllable is never clipped.
+        Generates canonical VobizXML that plays an audio file and terminates the call.
         """
-        if vobizxml is not None:
-            try:
-                r = vobizxml.ResponseElement()
-                r.add_wait(length=1)
-                r.add_play(audio_url, loop=loop)
-                r.add_wait(length=1)
-                r.add_hangup()
-                return r.to_string()
-            except Exception:
-                pass
+        escaped_url = xml.sax.saxutils.escape(str(audio_url).strip())
+        loop_cnt = max(1, int(loop or 1))
         return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Wait length="1"/>
-    <Play loop="{loop}">{audio_url}</Play>
-    <Wait length="1"/>
+    <Play loop="{loop_cnt}">{escaped_url}</Play>
     <Hangup/>
 </Response>"""
 
     @staticmethod
     def generate_speak_xml(message: str, voice: str = "WOMAN", language: str = "en-US", loop: int = 1) -> str:
         """
-        Generates VobizXML that converts text to speech with pre-answer stabilization and cuts the call.
+        Generates canonical VobizXML that converts text to speech and terminates the call.
         """
-        if vobizxml is not None:
-            try:
-                r = vobizxml.ResponseElement()
-                r.add_wait(length=1)
-                r.add_speak(message, voice=voice, language=language, loop=loop)
-                r.add_wait(length=1)
-                r.add_hangup()
-                return r.to_string()
-            except Exception:
-                pass
+        escaped_msg = xml.sax.saxutils.escape(str(message).strip())
+        loop_cnt = max(1, int(loop or 1))
         return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Wait length="1"/>
-    <Speak voice="{voice}" language="{language}" loop="{loop}">{message}</Speak>
-    <Wait length="1"/>
+    <Speak voice="{voice}" language="{language}" loop="{loop_cnt}">{escaped_msg}</Speak>
     <Hangup/>
 </Response>"""
 

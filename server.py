@@ -313,7 +313,7 @@ async def answer_webhook(
             notes="Call answered. VobizXML dispatched."
         )
 
-    return Response(content=xml_content, media_type="application/xml")
+    return Response(content=xml_content, media_type="application/xml; charset=utf-8")
 
 @app.api_route("/webhook/hangup", methods=["GET", "POST"])
 async def hangup_webhook(request: Request):
