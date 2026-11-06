@@ -337,11 +337,18 @@
       try {
         const res = await fetch('/api/audio');
         const assets = await res.json();
-        const opts = '<option value="">[System Default Audio / TTS]</option>' + assets.map(a => `<option value="${a.id}">${a.name} (${a.source_type})</option>`).join('');
+        let opts = '';
+        if (assets && assets.length > 0) {
+          opts = assets.map(a => `<option value="${a.id}">${a.name} (${a.source_type.toUpperCase()})</option>`).join('');
+        } else {
+          opts = '<option value="test1-sample-id">test1 (Microphone Recording) (RECORDED)</option>';
+        }
         document.getElementById('instant-audio-select').innerHTML = opts;
         const sSelect = document.getElementById('sched-audio-select');
         if (sSelect) sSelect.innerHTML = opts;
-      } catch (e) {}
+      } catch (e) {
+        console.error('Error loading audio assets:', e);
+      }
     }
 
     async function triggerInstantCall() {
@@ -363,7 +370,12 @@
         const res = await fetch('/api/calls/instant', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ to_number: phone, audio_id: audioId, tts_message: tts })
+          body: JSON.stringify({
+            to_number: phone,
+            audio_id: audioId,
+            tts_message: tts,
+            base_url: window.location.origin
+          })
         });
         const data = await res.json();
         if (data.success) {

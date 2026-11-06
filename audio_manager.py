@@ -65,7 +65,8 @@ def save_uploaded_audio(file_name: str, file_bytes: bytes, custom_name: Optional
         mime_type=mime_type,
         source_type="upload",
         duration_seconds=duration,
-        file_size_bytes=file_size
+        file_size_bytes=file_size,
+        audio_bytes=file_bytes
     )
     logger.info(f"Saved uploaded audio: {unique_filename} (ID: {asset_id})")
     return asset_id
@@ -96,7 +97,8 @@ def save_recorded_audio(audio_bytes: bytes, custom_name: Optional[str] = None, f
         mime_type=mime_type,
         source_type="recorded",
         duration_seconds=duration,
-        file_size_bytes=file_size
+        file_size_bytes=file_size,
+        audio_bytes=audio_bytes
     )
     logger.info(f"Saved recorded audio: {unique_filename} (ID: {asset_id})")
     return asset_id

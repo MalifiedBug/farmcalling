@@ -79,28 +79,96 @@ def health_check():
     }
 
 # --- Audio Serving ---
-@app.get("/audio/{asset_id}")
+@app.api_route("/audio/{asset_id}", methods=["GET", "HEAD"])
 def serve_audio(asset_id: str):
+    """
+    High-reliability audio streaming endpoint for Vobiz (<Play> URL).
+    Tiers:
+    1. Database BLOB bytes (in-memory, works across any serverless instance)
+    2. Filepath on disk (temporary or bundled)
+    3. Bundled static audio (/static/audio/test1.wav, farm_alert.wav)
+    4. Fallback chime (never returns 404 to Vobiz so calls never drop in silence)
+    """
+    logger.info(f"Serving audio request for asset_id: {asset_id}")
+
+    # Tier 1: Look up in database
     asset = get_audio_asset(asset_id)
-    if not asset:
-        raise HTTPException(status_code=404, detail="Audio asset not found")
+    if asset:
+        # 1a. If raw audio_bytes BLOB exists in DB, serve directly from memory
+        raw_bytes = asset.get("audio_bytes")
+        if raw_bytes and len(raw_bytes) > 0:
+            mime_type = asset.get("mime_type", "audio/wav")
+            filename = asset.get("filename", f"{asset_id}.wav")
+            return Response(
+                content=raw_bytes,
+                media_type=mime_type,
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(len(raw_bytes)),
+                    "Content-Disposition": f'inline; filename="{filename}"',
+                    "Cache-Control": "public, max-age=3600"
+                }
+            )
 
-    filepath = asset.get("filepath", "")
-    if not filepath or not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="Audio file not found on disk")
+        # 1b. If filepath on disk exists
+        fp = asset.get("filepath", "")
+        if fp and os.path.exists(fp):
+            return FileResponse(
+                path=fp,
+                media_type=asset.get("mime_type", "audio/wav"),
+                filename=asset.get("filename", f"{asset_id}.wav"),
+                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+            )
 
-    mime_type = asset.get("mime_type", "audio/mpeg")
-    filename = asset.get("filename", f"{asset_id}.mp3")
+        # 1c. Try resolving filename in static/audio, data/audio, or /tmp/audio
+        fname = asset.get("filename", "")
+        if fname:
+            for c_dir in [
+                os.path.join(STATIC_DIR, "audio"),
+                os.path.join(os.path.dirname(__file__), "data", "audio"),
+                "/tmp/audio"
+            ]:
+                candidate = os.path.join(c_dir, fname)
+                if os.path.exists(candidate):
+                    return FileResponse(
+                        path=candidate,
+                        media_type=asset.get("mime_type", "audio/wav"),
+                        headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+                    )
 
-    return FileResponse(
-        path=filepath,
-        media_type=mime_type,
-        filename=filename,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=3600"
-        }
-    )
+    # Tier 2: Check if asset_id is a direct filename (e.g. "test1.wav", "test1", "farm_alert.wav")
+    clean_id = asset_id.strip()
+    candidates = [clean_id]
+    if not clean_id.endswith(".wav") and not clean_id.endswith(".mp3"):
+        candidates.extend([f"{clean_id}.wav", f"{clean_id}.mp3"])
+
+    for c_name in candidates:
+        for c_dir in [
+            os.path.join(STATIC_DIR, "audio"),
+            os.path.join(os.path.dirname(__file__), "data", "audio"),
+            "/tmp/audio"
+        ]:
+            candidate = os.path.join(c_dir, c_name)
+            if os.path.exists(candidate):
+                mtype = "audio/wav" if candidate.endswith(".wav") else "audio/mpeg"
+                return FileResponse(
+                    path=candidate,
+                    media_type=mtype,
+                    headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+                )
+
+    # Tier 3: Infallible fallback - never return 404 to Vobiz during a live call!
+    for fb_name in ["test1.wav", "farm_alert.wav"]:
+        fb_path = os.path.join(STATIC_DIR, "audio", fb_name)
+        if os.path.exists(fb_path):
+            logger.warning(f"Audio asset '{asset_id}' not found; streaming fallback audio: {fb_name}")
+            return FileResponse(
+                path=fb_path,
+                media_type="audio/wav",
+                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+            )
+
+    raise HTTPException(status_code=404, detail=f"Audio asset '{asset_id}' not found")
 
 # --- Vobiz Webhooks ---
 @app.api_route("/webhook/answer", methods=["GET", "POST"])
@@ -123,15 +191,21 @@ async def answer_webhook(
     from_num = form_data.get("From") or request.query_params.get("From", "")
     to_num = form_data.get("To") or request.query_params.get("To", "")
 
+    # Auto-resolve base_url dynamically from incoming request if not configured
     settings = get_settings()
     base_url = settings.get("webhook_base_url", "").rstrip("/")
-    if not base_url or "example.com" in base_url:
-        host_header = request.headers.get("host")
+    if not base_url or "example.com" in base_url or "localhost" in base_url or "127.0.0.1" in base_url:
+        host_header = request.headers.get("x-forwarded-host") or request.headers.get("host")
         if host_header:
-            base_url = f"https://{host_header}"
+            proto = request.headers.get("x-forwarded-proto", "https")
+            base_url = f"{proto}://{host_header}"
+        else:
+            v_url = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ.get("VERCEL_URL")
+            if v_url:
+                base_url = f"https://{v_url}" if not v_url.startswith("http") else v_url
 
     schedule = get_schedule(schedule_id) if schedule_id else None
-    target_audio_id = audio_id or (schedule.get("audio_id") if schedule else None) or settings.get("default_audio_id")
+    target_audio_id = audio_id or (schedule.get("audio_id") if schedule else None) or settings.get("default_audio_id") or "test1-sample-id"
     target_play_mode = play_mode or (schedule.get("play_mode") if schedule else "audio")
     target_loop = loop if loop is not None else (schedule.get("loop_count", 1) if schedule else 1)
 
@@ -143,15 +217,20 @@ async def answer_webhook(
         lang = settings.get("tts_default_language", "en-US")
         xml_content = VobizClient.generate_speak_xml(tts_text, voice=voice, language=lang, loop=target_loop)
     elif target_audio_id:
-        asset = get_audio_asset(target_audio_id)
-        if asset and asset.get("source_type") == "tts" and asset.get("tts_text"):
-            voice = asset.get("tts_voice") or settings.get("tts_default_voice", "WOMAN")
-            xml_content = VobizClient.generate_speak_xml(asset["tts_text"], voice=voice, loop=target_loop)
+        # Check if direct URL (e.g. http:// or https://)
+        if str(target_audio_id).startswith("http://") or str(target_audio_id).startswith("https://"):
+            xml_content = VobizClient.generate_play_xml(str(target_audio_id), loop=target_loop)
         else:
-            audio_public_url = f"{base_url}/audio/{target_audio_id}"
-            xml_content = VobizClient.generate_play_xml(audio_public_url, loop=target_loop)
+            asset = get_audio_asset(target_audio_id)
+            if asset and asset.get("source_type") == "tts" and asset.get("tts_text"):
+                voice = asset.get("tts_voice") or settings.get("tts_default_voice", "WOMAN")
+                xml_content = VobizClient.generate_speak_xml(asset["tts_text"], voice=voice, loop=target_loop)
+            else:
+                audio_public_url = f"{base_url}/audio/{target_audio_id}"
+                xml_content = VobizClient.generate_play_xml(audio_public_url, loop=target_loop)
     else:
-        xml_content = VobizClient.generate_speak_xml("Hello, this is an automated call from FarmCalling. Goodbye.")
+        audio_public_url = f"{base_url}/audio/test1-sample-id"
+        xml_content = VobizClient.generate_play_xml(audio_public_url, loop=target_loop)
 
     if call_uuid:
         update_call_log_by_uuid(
@@ -287,10 +366,17 @@ class InstantCallPayload(BaseModel):
     audio_id: Optional[str] = None
     play_mode: Optional[str] = "audio"
     tts_message: Optional[str] = None
+    base_url: Optional[str] = None
 
 @app.post("/api/calls/instant")
-def api_trigger_instant_call(payload: InstantCallPayload):
+def api_trigger_instant_call(request: Request, payload: InstantCallPayload):
     from scheduler import trigger_call_now
+
+    # Auto-resolve the exact public HTTPS domain from request or payload
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    proto = request.headers.get("x-forwarded-proto", "https")
+    detected_base = payload.base_url or (f"{proto}://{host}" if host else None)
+
     p_mode = "tts" if payload.tts_message else (payload.play_mode or "audio")
     success, msg, data = trigger_call_now(
         to_number=payload.to_number,
@@ -298,7 +384,8 @@ def api_trigger_instant_call(payload: InstantCallPayload):
         play_mode=p_mode,
         tts_message=payload.tts_message,
         loop_count=1,
-        schedule_name="Instant Dial"
+        schedule_name="Instant Dial",
+        base_url_override=detected_base
     )
     return {"success": success, "message": msg, "data": data}
 

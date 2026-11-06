@@ -147,9 +147,21 @@ def init_db():
         file_size_bytes INTEGER DEFAULT 0,
         tts_text TEXT,
         tts_voice TEXT,
+        audio_bytes BLOB,
+        external_url TEXT,
         created_at TEXT NOT NULL
     )
     """)
+
+    # Migrations for existing SQLite files
+    try:
+        cursor.execute("ALTER TABLE audio_assets ADD COLUMN audio_bytes BLOB")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE audio_assets ADD COLUMN external_url TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS schedules (
@@ -201,18 +213,98 @@ def init_db():
         "caller_id": get_env_override("caller_id") or "",
         "app_id": get_env_override("app_id") or "",
         "app_name": get_env_override("app_name") or "FarmCalling-Vobiz-App",
-        "webhook_base_url": get_env_override("webhook_base_url") or "https://api.example.com",
+        "webhook_base_url": get_env_override("webhook_base_url") or "",
         "ring_timeout": get_env_override("ring_timeout") or "30",
         "time_limit": get_env_override("time_limit") or "3600",
         "machine_detection": get_env_override("machine_detection") or "false",
         "timezone": get_env_override("timezone") or "Asia/Kolkata",
-        "default_audio_id": get_env_override("default_audio_id") or "",
+        "default_audio_id": get_env_override("default_audio_id") or "test1-sample-id",
         "tts_default_voice": get_env_override("tts_default_voice") or "WOMAN",
         "tts_default_language": get_env_override("tts_default_language") or "en-US"
     }
 
     for key, val in default_settings.items():
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, str(val)))
+
+    # Seed default audio assets if empty (guarantees audio availability on any serverless cold start)
+    cursor.execute("SELECT COUNT(*) as cnt FROM audio_assets")
+    count_row = cursor.fetchone()
+    if not count_row or count_row["cnt"] == 0:
+        static_audio_dir = os.path.join(os.path.dirname(__file__), "static", "audio")
+        
+        # 1. Seed test1.wav (user's real recording)
+        t1_path = os.path.join(static_audio_dir, "test1.wav")
+        t1_bytes = None
+        if os.path.exists(t1_path):
+            try:
+                with open(t1_path, "rb") as f:
+                    t1_bytes = f.read()
+            except Exception as e:
+                logger.warning(f"Could not read test1.wav for seeding: {e}")
+        cursor.execute("""
+            INSERT INTO audio_assets (
+                id, name, filename, filepath, mime_type, source_type,
+                duration_seconds, file_size_bytes, audio_bytes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            "test1-sample-id",
+            "test1 (Microphone Recording)",
+            "test1.wav",
+            t1_path,
+            "audio/wav",
+            "recorded",
+            3.42,
+            len(t1_bytes) if t1_bytes else 109484,
+            t1_bytes,
+            datetime.now().isoformat()
+        ))
+
+        # 2. Seed farm_alert.wav (chime announcement)
+        fa_path = os.path.join(static_audio_dir, "farm_alert.wav")
+        fa_bytes = None
+        if os.path.exists(fa_path):
+            try:
+                with open(fa_path, "rb") as f:
+                    fa_bytes = f.read()
+            except Exception as e:
+                logger.warning(f"Could not read farm_alert.wav for seeding: {e}")
+        cursor.execute("""
+            INSERT INTO audio_assets (
+                id, name, filename, filepath, mime_type, source_type,
+                duration_seconds, file_size_bytes, audio_bytes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            "farm-alert-chime-id",
+            "Farm Alert (Melodic Chime)",
+            "farm_alert.wav",
+            fa_path,
+            "audio/wav",
+            "upload",
+            2.5,
+            len(fa_bytes) if fa_bytes else 80000,
+            fa_bytes,
+            datetime.now().isoformat()
+        ))
+
+        # 3. Seed TTS asset
+        cursor.execute("""
+            INSERT INTO audio_assets (
+                id, name, filename, filepath, mime_type, source_type,
+                duration_seconds, file_size_bytes, tts_text, tts_voice, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            "welcome-tts-id",
+            "Default Farm Voice Notice (TTS)",
+            "tts_virtual",
+            "",
+            "text/plain",
+            "tts",
+            0.0,
+            0,
+            "Hello! This is an automated voice announcement from FarmCalling. Have a productive day ahead. Goodbye.",
+            "WOMAN",
+            datetime.now().isoformat()
+        ))
 
     conn.commit()
     conn.close()
@@ -281,7 +373,9 @@ def add_audio_asset(
     duration_seconds: float = 0.0,
     file_size_bytes: int = 0,
     tts_text: Optional[str] = None,
-    tts_voice: Optional[str] = None
+    tts_voice: Optional[str] = None,
+    audio_bytes: Optional[bytes] = None,
+    external_url: Optional[str] = None
 ) -> str:
     asset_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
@@ -290,18 +384,26 @@ def add_audio_asset(
         conn.execute("""
             INSERT INTO audio_assets (
                 id, name, filename, filepath, mime_type, source_type,
-                duration_seconds, file_size_bytes, tts_text, tts_voice, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                duration_seconds, file_size_bytes, tts_text, tts_voice,
+                audio_bytes, external_url, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             asset_id, name, filename, filepath, mime_type, source_type,
-            duration_seconds, file_size_bytes, tts_text, tts_voice, now
+            duration_seconds, file_size_bytes, tts_text, tts_voice,
+            audio_bytes, external_url, now
         ))
     conn.close()
     return asset_id
 
 def get_audio_assets() -> List[Dict[str, Any]]:
     conn = get_connection()
-    rows = conn.execute("SELECT * FROM audio_assets ORDER BY created_at DESC").fetchall()
+    rows = conn.execute("""
+        SELECT id, name, filename, filepath, mime_type, source_type,
+               duration_seconds, file_size_bytes, tts_text, tts_voice,
+               external_url, (audio_bytes IS NOT NULL) AS has_audio_bytes, created_at
+        FROM audio_assets
+        ORDER BY created_at DESC
+    """).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

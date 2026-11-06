@@ -64,6 +64,19 @@ class TestFarmCalling(unittest.TestCase):
         self.assertEqual(res.headers.get("content-type"), "audio/wav")
         self.assertEqual(res.content, sample_wav_bytes)
 
+        # 2b. Test bundled static audio and HEAD request
+        head_res = self.client.head(f"/audio/{asset_id}")
+        self.assertEqual(head_res.status_code, 200)
+
+        t1_res = self.client.get("/audio/test1.wav")
+        self.assertEqual(t1_res.status_code, 200)
+        self.assertEqual(t1_res.headers.get("content-type"), "audio/wav")
+
+        # 2c. Test fallback resilience (never 404 on live call)
+        fallback_res = self.client.get("/audio/unknown_missing_audio_id")
+        self.assertEqual(fallback_res.status_code, 200)
+        self.assertEqual(fallback_res.headers.get("content-type"), "audio/wav")
+
         # 3. Test TTS asset
         tts_id = create_tts_asset("Test TTS", "Hello farmer", voice="WOMAN")
         tts_asset = get_audio_asset(tts_id)

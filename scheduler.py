@@ -62,6 +62,11 @@ def execute_call_job(schedule_id: str):
     auth_token = settings.get("auth_token", "").strip()
     caller_id = settings.get("caller_id", "").strip()
     base_url = settings.get("webhook_base_url", "").strip().rstrip("/")
+    if not base_url or "example.com" in base_url or "localhost" in base_url or "127.0.0.1" in base_url:
+        v_url = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ.get("VERCEL_URL") or os.environ.get("WEBHOOK_BASE_URL")
+        if v_url:
+            clean_v = v_url.strip().rstrip("/")
+            base_url = f"https://{clean_v}" if not clean_v.startswith("http") else clean_v
 
     if not auth_id or not auth_token:
         logger.error("Vobiz credentials not configured. Cannot execute call.")
@@ -245,7 +250,8 @@ def trigger_call_now(
     play_mode: str = "audio",
     tts_message: Optional[str] = None,
     loop_count: int = 1,
-    schedule_name: str = "Instant Call"
+    schedule_name: str = "Instant Call",
+    base_url_override: Optional[str] = None
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Immediately triggers an outbound call for testing or on-demand dialing.
@@ -254,7 +260,15 @@ def trigger_call_now(
     auth_id = settings.get("auth_id", "").strip()
     auth_token = settings.get("auth_token", "").strip()
     caller_id = settings.get("caller_id", "").strip()
-    base_url = settings.get("webhook_base_url", "").strip().rstrip("/")
+
+    base_url = (base_url_override or "").strip().rstrip("/")
+    if not base_url or "example.com" in base_url or "localhost" in base_url or "127.0.0.1" in base_url:
+        base_url = settings.get("webhook_base_url", "").strip().rstrip("/")
+    if not base_url or "example.com" in base_url or "localhost" in base_url or "127.0.0.1" in base_url:
+        v_url = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or os.environ.get("VERCEL_URL") or os.environ.get("WEBHOOK_BASE_URL")
+        if v_url:
+            clean_v = v_url.strip().rstrip("/")
+            base_url = f"https://{clean_v}" if not clean_v.startswith("http") else clean_v
 
     if not auth_id or not auth_token:
         return False, "Vobiz Auth ID and Auth Token are missing. Please configure them in Settings.", {}
