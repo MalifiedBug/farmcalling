@@ -4,6 +4,7 @@ Comprehensive Unit and Integration Tests for FarmCalling.
 
 import unittest
 import os
+os.environ["USE_SQLITE"] = "true"
 import json
 from datetime import datetime, timedelta
 from fastapi.testclient import TestClient

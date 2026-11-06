@@ -14,7 +14,7 @@ from audio_manager import (
     delete_audio_asset,
     get_asset_url
 )
-from database import get_settings, update_settings
+from database import get_settings, update_settings, get_audio_bytes
 
 st.title("🎙️ Audio Studio & Voice Library")
 st.caption("Record custom voice announcements from your microphone, upload audio tracks, or configure Text-to-Speech.")
@@ -131,14 +131,17 @@ else:
                 pub_url = get_asset_url(asset["id"], base_url)
                 if asset["source_type"] == "tts":
                     st.markdown(f"🗣️ *\"{asset.get('tts_text', '')}\"*")
-                elif asset.get("audio_bytes"):
-                    st.audio(asset["audio_bytes"], format=asset.get("mime_type", "audio/wav"))
-                    st.caption(f"Vobiz Stream URL: `{pub_url}`")
-                elif os.path.exists(asset.get("filepath", "")):
-                    st.audio(asset["filepath"])
-                    st.caption(f"Vobiz Stream URL: `{pub_url}`")
                 else:
-                    st.caption("⚠️ Audio file not found on local disk.")
+                    # Stream audio binary directly from Supabase PostgreSQL
+                    a_bytes = get_audio_bytes(asset["id"])
+                    if a_bytes and len(a_bytes) > 0:
+                        st.audio(a_bytes, format=asset.get("mime_type", "audio/wav"))
+                        st.caption(f"Vobiz Stream URL: `{pub_url}`")
+                    elif os.path.exists(asset.get("filepath", "")):
+                        st.audio(asset["filepath"])
+                        st.caption(f"Vobiz Stream URL: `{pub_url}`")
+                    else:
+                        st.caption("⚠️ Audio file not found.")
 
             with col_actions:
                 if not is_default:

@@ -13,7 +13,12 @@ from database import (
     update_settings,
     is_setting_env_managed,
     is_vobiz_env_configured,
-    get_env_managed_keys
+    get_env_managed_keys,
+    get_db_mode,
+    is_postgres,
+    db_execute,
+    get_schedules,
+    get_audio_assets
 )
 from vobiz_client import VobizClient
 
@@ -22,12 +27,13 @@ st.caption("Configure Vobiz API keys, register webhook applications, set caller 
 
 current_settings = get_settings()
 
-tab_vobiz, tab_app, tab_webhook, tab_policy, tab_sim = st.tabs([
+tab_vobiz, tab_app, tab_webhook, tab_policy, tab_sim, tab_db = st.tabs([
     "🔑 Vobiz Credentials",
     "📱 Vobiz Application Sync",
     "🌐 Webhook & Tunneling",
     "⚙️ Call Policy & Audio",
-    "🧪 Webhook Simulator"
+    "🧪 Webhook Simulator",
+    "🗄️ Database & Storage"
 ])
 
 # ----------------- TAB 1: VOBIZ CREDENTIALS -----------------
@@ -344,4 +350,62 @@ with tab_sim:
                 st.success(f"Hangup recorded! Check Call History page to verify.")
             except Exception as e:
                 st.error(f"Simulation failed: {e}")
+
+# ----------------- TAB 6: DATABASE & STORAGE -----------------
+with tab_db:
+    st.subheader("Supabase PostgreSQL & Media Persistence")
+    st.caption("Inspect database connectivity, persistent cloud tables, and audio storage.")
+
+    db_mode = get_db_mode()
+    is_pg = is_postgres()
+
+    if is_pg:
+        st.success("🟢 **Connected to Supabase PostgreSQL (Persistent Cloud Storage)**")
+        st.caption("All schedules, call records, settings, and audio binaries (`BYTEA`) are stored permanently in Supabase.")
+    else:
+        st.warning("🟡 **Active Mode: SQLite (Local/Ephemeral)**")
+        st.caption("Using local SQLite storage. Configure `DATABASE_URL` in environment variables or secrets to activate Supabase.")
+
+    c_host, c_bucket, c_stat = st.columns(3)
+    with c_host:
+        st.metric("Database Host", "Supabase PostgreSQL", help="db.cvralbaxzcirpdnhgyus.supabase.co:5432")
+    with c_bucket:
+        st.metric("Storage Bucket", "farmcalling-audio", help="Supabase Public Audio Storage Bucket")
+    with c_stat:
+        st.metric("Persistence Status", "ACTIVE" if is_pg else "EPHEMERAL")
+
+    st.markdown("---")
+    st.markdown("#### Cloud Tables & Records in Database")
+
+    try:
+        schedules_cnt = len(get_schedules())
+        audio_cnt = len(get_audio_assets())
+        call_row = db_execute("SELECT count(*) as c FROM call_logs", fetch="one")
+        call_cnt = call_row["c"] if call_row else 0
+        sett_row = db_execute("SELECT count(*) as c FROM settings", fetch="one")
+        sett_cnt = sett_row["c"] if sett_row else 0
+
+        t1, t2, t3, t4 = st.columns(4)
+        with t1:
+            st.metric("Campaign Schedules", schedules_cnt)
+        with t2:
+            st.metric("Saved Audio Tracks", audio_cnt)
+        with t3:
+            st.metric("Call Logs (CDR)", call_cnt)
+        with t4:
+            st.metric("Configuration Keys", sett_cnt)
+    except Exception as ex:
+        st.error(f"Error querying table telemetry: {ex}")
+
+    st.markdown("---")
+    if st.button("🔄 Test Connection & Re-sync Tables", type="primary"):
+        with st.status("Verifying Supabase PostgreSQL connection...", expanded=True) as status_box:
+            try:
+                row = db_execute("SELECT NOW() as current_time, current_database() as db_name, version() as v;", fetch="one")
+                st.write(f"Database Name: `{row.get('db_name')}`")
+                st.write(f"Supabase Server Time: `{row.get('current_time')}`")
+                st.write(f"Engine Version: `{row.get('v')[:30]}...`")
+                status_box.update(label="Supabase Connection Verified Successfully!", state="complete", expanded=True)
+            except Exception as e:
+                status_box.update(label=f"Connection Error: {e}", state="error")
 

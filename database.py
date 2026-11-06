@@ -73,8 +73,13 @@ ENV_SETTING_MAPPINGS = {
     "tts_default_language": ["VOBIZ_TTS_LANGUAGE", "TTS_DEFAULT_LANGUAGE"]
 }
 
-# Optional direct URL override if set in environment
-DEFAULT_SUPABASE_URL = os.environ.get("DATABASE_URL")
+# Production Supabase PostgreSQL Connection String (retains persistence across Vercel serverless cold boots)
+DEFAULT_SUPABASE_URL = (
+    os.environ.get("DATABASE_URL")
+    or os.environ.get("SUPABASE_DB_URL")
+    or os.environ.get("POSTGRES_URL")
+    or "postgresql://postgres:X%23%3FS%268%21HGFP%21vH9@db.cvralbaxzcirpdnhgyus.supabase.co:5432/postgres"
+)
 
 def get_env_override(key: str) -> Optional[str]:
     """
@@ -176,16 +181,24 @@ def is_postgres() -> bool:
     return get_db_mode() == "postgres"
 
 def get_pg_conn():
-    """Returns persistent, autocommit connection to Supabase PostgreSQL."""
+    """Returns persistent, autocommit connection to Supabase PostgreSQL with auto-reconnection."""
     global _pg_conn
     if _pg_conn is not None:
         try:
             if _pg_conn.closed == 0:
+                with _pg_conn.cursor() as cur:
+                    cur.execute("SELECT 1;")
                 return _pg_conn
         except Exception:
+            try:
+                _pg_conn.close()
+            except Exception:
+                pass
             _pg_conn = None
 
     url = get_database_url()
+    if not url:
+        raise ValueError("No database URL available for Supabase PostgreSQL connection.")
     conn = psycopg2.connect(url, connect_timeout=10)
     conn.autocommit = True
     _pg_conn = conn
@@ -449,68 +462,68 @@ def init_db():
             (key, str(val))
         )
 
-    # Seed default audio assets if empty
-    cnt_row = db_execute("SELECT COUNT(*) as cnt FROM audio_assets", fetch="one")
-    if not cnt_row or cnt_row["cnt"] == 0:
-        static_audio_dir = os.path.join(os.path.dirname(__file__), "static", "audio")
+    # Seed default audio assets (guarantees preloaded samples are always in Supabase)
+    static_audio_dir = os.path.join(os.path.dirname(__file__), "static", "audio")
 
-        # 1. Seed test1.wav
-        t1_path = os.path.join(static_audio_dir, "test1.wav")
-        t1_bytes = None
-        if os.path.exists(t1_path):
-            try:
-                with open(t1_path, "rb") as f:
-                    t1_bytes = f.read()
-            except Exception as e:
-                logger.warning(f"Could not read test1.wav for seeding: {e}")
+    # 1. Seed test1.wav
+    t1_path = os.path.join(static_audio_dir, "test1.wav")
+    t1_bytes = None
+    if os.path.exists(t1_path):
+        try:
+            with open(t1_path, "rb") as f:
+                t1_bytes = f.read()
+        except Exception as e:
+            logger.warning(f"Could not read test1.wav for seeding: {e}")
 
-        db_execute("""
-            INSERT INTO audio_assets (
-                id, name, filename, filepath, mime_type, source_type,
-                duration_seconds, file_size_bytes, audio_bytes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO NOTHING;
-        """, (
-            "test1-sample-id",
-            "test1 (Microphone Recording)",
-            "test1.wav",
-            t1_path,
-            "audio/wav",
-            "recorded",
-            3.42,
-            len(t1_bytes) if t1_bytes else 109484,
-            t1_bytes,
-            datetime.now().isoformat()
-        ))
+    db_execute("""
+        INSERT INTO audio_assets (
+            id, name, filename, filepath, mime_type, source_type,
+            duration_seconds, file_size_bytes, audio_bytes, external_url, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO NOTHING;
+    """, (
+        "test1-sample-id",
+        "test1 (Microphone Recording)",
+        "test1.wav",
+        t1_path,
+        "audio/wav",
+        "recorded",
+        3.42,
+        len(t1_bytes) if t1_bytes else 109484,
+        t1_bytes,
+        "https://cvralbaxzcirpdnhgyus.supabase.co/storage/v1/object/public/farmcalling-audio/test1.wav",
+        datetime.now().isoformat()
+    ))
 
-        # 2. Seed farm_alert.wav
-        fa_path = os.path.join(static_audio_dir, "farm_alert.wav")
-        fa_bytes = None
-        if os.path.exists(fa_path):
-            try:
-                with open(fa_path, "rb") as f:
-                    fa_bytes = f.read()
-            except Exception as e:
-                logger.warning(f"Could not read farm_alert.wav for seeding: {e}")
+    # 2. Seed farm_alert.wav
+    fa_path = os.path.join(static_audio_dir, "farm_alert.wav")
+    fa_bytes = None
+    if os.path.exists(fa_path):
+        try:
+            with open(fa_path, "rb") as f:
+                fa_bytes = f.read()
+        except Exception as e:
+            logger.warning(f"Could not read farm_alert.wav for seeding: {e}")
 
-        db_execute("""
-            INSERT INTO audio_assets (
-                id, name, filename, filepath, mime_type, source_type,
-                duration_seconds, file_size_bytes, audio_bytes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO NOTHING;
-        """, (
-            "farm-alert-sample-id",
-            "High Alert Siren & Warning",
-            "farm_alert.wav",
-            fa_path,
-            "audio/wav",
-            "upload",
-            2.5,
-            len(fa_bytes) if fa_bytes else 80044,
-            fa_bytes,
-            datetime.now().isoformat()
-        ))
+    db_execute("""
+        INSERT INTO audio_assets (
+            id, name, filename, filepath, mime_type, source_type,
+            duration_seconds, file_size_bytes, audio_bytes, external_url, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO NOTHING;
+    """, (
+        "farm-alert-sample-id",
+        "High Alert Siren & Warning",
+        "farm_alert.wav",
+        fa_path,
+        "audio/wav",
+        "upload",
+        2.5,
+        len(fa_bytes) if fa_bytes else 80044,
+        fa_bytes,
+        "https://cvralbaxzcirpdnhgyus.supabase.co/storage/v1/object/public/farmcalling-audio/farm_alert.wav",
+        datetime.now().isoformat()
+    ))
 
 # --- Settings Helpers ---
 
@@ -564,9 +577,12 @@ def add_audio_asset(
     audio_bytes: Optional[bytes] = None,
     external_url: Optional[str] = None
 ) -> str:
-    """Stores audio asset metadata and binary content in persistent storage."""
+    """Stores audio asset metadata and binary content in persistent Supabase PostgreSQL."""
     asset_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
+    if not external_url:
+        external_url = f"https://cvralbaxzcirpdnhgyus.supabase.co/storage/v1/object/public/farmcalling-audio/{filename}"
+
     db_execute("""
         INSERT INTO audio_assets (
             id, name, filename, filepath, mime_type, source_type,
@@ -581,8 +597,8 @@ def add_audio_asset(
     return asset_id
 
 def get_audio_assets(include_test_stubs: bool = False) -> List[Dict[str, Any]]:
-    """Returns list of audible audio assets, filtering out 0-second unit test stubs by default."""
-    filter_sql = "" if include_test_stubs else "WHERE (source_type = 'tts' OR file_size_bytes >= 1000)"
+    """Returns list of audible audio assets from Supabase PostgreSQL."""
+    filter_sql = "" if include_test_stubs else "WHERE (source_type = 'tts' OR file_size_bytes > 500)"
     return db_execute(f"""
         SELECT id, name, filename, filepath, mime_type, source_type,
                duration_seconds, file_size_bytes, tts_text, tts_voice,
@@ -593,8 +609,13 @@ def get_audio_assets(include_test_stubs: bool = False) -> List[Dict[str, Any]]:
     """, fetch="all") or []
 
 def get_audio_asset(asset_id: str) -> Optional[Dict[str, Any]]:
-    """Returns complete audio asset record including binary audio_bytes."""
+    """Returns complete audio asset record including binary audio_bytes from Supabase PostgreSQL."""
     return db_execute("SELECT * FROM audio_assets WHERE id = ?", (asset_id,), fetch="one")
+
+def get_audio_bytes(asset_id: str) -> Optional[bytes]:
+    """Retrieves only the raw audio bytes for an asset directly from Supabase PostgreSQL."""
+    row = db_execute("SELECT audio_bytes FROM audio_assets WHERE id = ?", (asset_id,), fetch="one")
+    return row["audio_bytes"] if row else None
 
 def delete_audio_asset(asset_id: str) -> bool:
     asset = get_audio_asset(asset_id)

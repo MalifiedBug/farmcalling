@@ -102,12 +102,35 @@ def index_page():
 
 @app.get("/health")
 def health_check():
+    from database import get_db_mode, is_postgres
     return {
         "status": "healthy",
         "service": "FarmCalling Telephony Engine",
+        "database_backend": get_db_mode(),
+        "is_supabase_postgres": is_postgres(),
         "vercel_serverless": bool(os.environ.get("VERCEL")),
         "timestamp": datetime.now().isoformat()
     }
+
+@app.get("/api/db/status")
+def api_db_status():
+    """Returns database backend connection and table telemetry for verification."""
+    from database import get_db_mode, is_postgres, db_execute, get_audio_assets, get_schedules
+    stats = {}
+    try:
+        stats["backend"] = get_db_mode()
+        stats["is_supabase_postgres"] = is_postgres()
+        stats["schedules_count"] = len(get_schedules())
+        stats["audio_assets_count"] = len(get_audio_assets())
+        c_row = db_execute("SELECT count(*) as c FROM call_logs", fetch="one")
+        stats["call_logs_count"] = c_row["c"] if c_row else 0
+        s_row = db_execute("SELECT count(*) as c FROM settings", fetch="one")
+        stats["settings_count"] = s_row["c"] if s_row else 0
+        stats["status"] = "connected"
+    except Exception as e:
+        stats["status"] = "error"
+        stats["error"] = str(e)
+    return stats
 
 # --- Audio Serving ---
 @app.api_route("/audio/{asset_id}", methods=["GET", "HEAD"])
