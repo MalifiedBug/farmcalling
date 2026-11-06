@@ -37,6 +37,16 @@ from database import (
 
 class TestSupabasePersistence(unittest.TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        # Reset any in-memory sqlite caching from previous unit tests
+        os.environ.pop("USE_SQLITE", None)
+        import database
+        database._db_mode = None
+        database._pg_conn = None
+        database._active_pg_url = None
+        database.init_db()
+
     def test_01_backend_is_supabase_postgres(self):
         """Verifies active backend is Supabase PostgreSQL."""
         mode = get_db_mode()

@@ -73,12 +73,17 @@ ENV_SETTING_MAPPINGS = {
     "tts_default_language": ["VOBIZ_TTS_LANGUAGE", "TTS_DEFAULT_LANGUAGE"]
 }
 
-# Production Supabase PostgreSQL Connection String (retains persistence across Vercel serverless cold boots)
+# Production Supabase PostgreSQL Connection Strings
+# 1. Supabase IPv4 Connection Pooler (required for Vercel Serverless / AWS Lambda which lack IPv6 egress)
+SUPABASE_POOLER_URL = "postgresql://postgres.cvralbaxzcirpdnhgyus:X%23%3FS%268%21HGFP%21vH9@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres"
+# 2. Supabase Direct Host (dual-stack IPv6)
+SUPABASE_DIRECT_URL = "postgresql://postgres:X%23%3FS%268%21HGFP%21vH9@db.cvralbaxzcirpdnhgyus.supabase.co:5432/postgres"
+
 DEFAULT_SUPABASE_URL = (
     os.environ.get("DATABASE_URL")
     or os.environ.get("SUPABASE_DB_URL")
     or os.environ.get("POSTGRES_URL")
-    or "postgresql://postgres:X%23%3FS%268%21HGFP%21vH9@db.cvralbaxzcirpdnhgyus.supabase.co:5432/postgres"
+    or SUPABASE_POOLER_URL
 )
 
 def get_env_override(key: str) -> Optional[str]:
@@ -153,26 +158,34 @@ def get_database_url() -> Optional[str]:
 
 _db_mode: Optional[str] = None
 _pg_conn = None
+_active_pg_url: Optional[str] = None
 
 def get_db_mode() -> str:
     """Determines active database backend ('postgres' or 'sqlite')."""
-    global _db_mode, _pg_conn
+    global _db_mode, _pg_conn, _active_pg_url
     if _db_mode is not None:
         return _db_mode
 
-    url = get_database_url()
-    if url and psycopg2 is not None and (url.startswith("postgres://") or url.startswith("postgresql://")):
-        try:
-            test_conn = psycopg2.connect(url, connect_timeout=8)
-            test_conn.autocommit = True
-            _pg_conn = test_conn
-            _db_mode = "postgres"
-            logger.info("Database initialized: connected to Supabase PostgreSQL (Persistent Storage).")
-            return _db_mode
-        except Exception as e:
-            logger.warning(f"Could not connect to Supabase PostgreSQL ({e}). Falling back to local SQLite.")
-            _db_mode = "sqlite"
-            return _db_mode
+    configured_url = get_database_url()
+    if configured_url and psycopg2 is not None and (configured_url.startswith("postgres://") or configured_url.startswith("postgresql://")):
+        # Candidate URLs to attempt: configured URL first, then IPv4 pooler, then direct
+        candidates = [configured_url]
+        if SUPABASE_POOLER_URL not in candidates:
+            candidates.append(SUPABASE_POOLER_URL)
+        if SUPABASE_DIRECT_URL not in candidates:
+            candidates.append(SUPABASE_DIRECT_URL)
+
+        for candidate in candidates:
+            try:
+                test_conn = psycopg2.connect(candidate, connect_timeout=7)
+                test_conn.autocommit = True
+                _pg_conn = test_conn
+                _active_pg_url = candidate
+                _db_mode = "postgres"
+                logger.info(f"Database initialized: connected to Supabase PostgreSQL via {candidate.split('@')[-1]}.")
+                return _db_mode
+            except Exception as e:
+                logger.warning(f"Connection attempt to {candidate.split('@')[-1]} failed: {e}")
 
     _db_mode = "sqlite"
     return _db_mode
@@ -182,7 +195,7 @@ def is_postgres() -> bool:
 
 def get_pg_conn():
     """Returns persistent, autocommit connection to Supabase PostgreSQL with auto-reconnection."""
-    global _pg_conn
+    global _pg_conn, _active_pg_url
     if _pg_conn is not None:
         try:
             if _pg_conn.closed == 0:
@@ -196,13 +209,21 @@ def get_pg_conn():
                 pass
             _pg_conn = None
 
-    url = get_database_url()
-    if not url:
-        raise ValueError("No database URL available for Supabase PostgreSQL connection.")
-    conn = psycopg2.connect(url, connect_timeout=10)
-    conn.autocommit = True
-    _pg_conn = conn
-    return _pg_conn
+    url = _active_pg_url or get_database_url() or SUPABASE_POOLER_URL
+    candidates = [url, SUPABASE_POOLER_URL, SUPABASE_DIRECT_URL]
+    for cand in candidates:
+        if not cand:
+            continue
+        try:
+            conn = psycopg2.connect(cand, connect_timeout=8)
+            conn.autocommit = True
+            _pg_conn = conn
+            _active_pg_url = cand
+            return _pg_conn
+        except Exception as e:
+            logger.warning(f"Connection attempt to {cand.split('@')[-1]} failed: {e}")
+
+    raise ValueError("Could not establish a connection to Supabase PostgreSQL.")
 
 def get_db_path() -> str:
     if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
