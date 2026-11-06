@@ -14,14 +14,14 @@ from audio_manager import (
     delete_audio_asset,
     get_asset_url
 )
-from database import get_settings, update_settings, get_audio_bytes
+from database import get_settings, update_settings, get_audio_bytes, get_effective_audio_id
 
 st.title("🎙️ Audio Studio & Voice Library")
 st.caption("Record custom voice announcements from your microphone, upload audio tracks, or configure Text-to-Speech.")
 
 settings = get_settings()
 base_url = settings.get("webhook_base_url", "https://api.example.com")
-default_audio_id = settings.get("default_audio_id", "")
+default_audio_id = get_effective_audio_id()
 
 tab_rec, tab_up, tab_tts = st.tabs(["🎤 Record Microphone", "📁 Upload Audio File", "🗣️ Text-to-Speech (TTS)"])
 
@@ -43,7 +43,8 @@ with tab_rec:
                 rec_name = f"Voice Recording {datetime.now().strftime('%b %d %H:%M')}"
             
             asset_id = save_recorded_audio(audio_bytes=audio_bytes, custom_name=rec_name, format_hint="wav")
-            st.success(f"Recording '{rec_name}' saved to Audio Library! (ID: {asset_id[:8]}...)")
+            update_settings({"default_audio_id": asset_id})
+            st.success(f"🎉 Recording '{rec_name}' saved to Supabase and set as active default call prompt! (ID: {asset_id[:8]}...)")
             st.rerun()
 
 # TAB 2: Upload Audio File
@@ -66,7 +67,8 @@ with tab_up:
                 file_bytes=file_bytes,
                 custom_name=c_name
             )
-            st.success(f"Audio '{c_name}' uploaded and ready for broadcast! (ID: {asset_id[:8]}...)")
+            update_settings({"default_audio_id": asset_id})
+            st.success(f"🎉 Audio '{c_name}' uploaded to Supabase and set as active default call prompt! (ID: {asset_id[:8]}...)")
             st.rerun()
 
 # TAB 3: Text-to-Speech Studio
@@ -120,7 +122,9 @@ else:
                 st.markdown(f"**{asset['name']}**")
                 is_default = (asset["id"] == default_audio_id)
                 if is_default:
-                    st.caption("⭐ **System Default Audio**")
+                    st.success("⭐ **ACTIVE CALL PROMPT**", icon="🎯")
+                else:
+                    st.caption("Available Audio Track")
                 
                 size_kb = round(asset.get("file_size_bytes", 0) / 1024, 1)
                 st.caption(f"Source: `{asset['source_type'].upper()}` | Size: `{size_kb} KB` | Format: `{asset['mime_type']}`")

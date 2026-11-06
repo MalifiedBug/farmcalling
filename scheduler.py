@@ -22,6 +22,7 @@ from database import (
     get_schedules,
     get_schedule,
     get_settings,
+    get_effective_audio_id,
     update_schedule_status,
     update_schedule_run_info,
     create_call_log,
@@ -93,7 +94,7 @@ def execute_call_job(schedule_id: str):
         return
 
     # Build webhook URLs
-    audio_id = schedule.get("audio_id") or settings.get("default_audio_id", "")
+    audio_id = get_effective_audio_id(schedule.get("audio_id"))
     play_mode = schedule.get("play_mode", "audio")
     loop = schedule.get("loop_count", 1)
 
@@ -410,7 +411,7 @@ def trigger_call_now(
     if not caller_id:
         return False, "Outbound Caller ID (From number) is missing in Settings.", {}
 
-    target_audio_id = audio_id or settings.get("default_audio_id", "")
+    target_audio_id = get_effective_audio_id(audio_id)
     answer_url = f"{base_url}/webhook/answer?audio_id={target_audio_id}&play_mode={play_mode}&loop={loop_count}"
     hangup_url = f"{base_url}/webhook/hangup"
 

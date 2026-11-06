@@ -25,6 +25,8 @@ from database import (
     get_audio_asset,
     get_audio_assets,
     delete_audio_asset,
+    get_latest_custom_audio_id,
+    get_effective_audio_id,
     get_schedule,
     get_schedules,
     create_schedule,
@@ -265,7 +267,18 @@ def serve_audio(asset_id: str, request: Request):
                 mtype = "audio/wav" if candidate.endswith(".wav") else "audio/mpeg"
                 return make_byte_response(b, mtype, c_name)
 
-    # Tier 3: Infallible fallback - never return 404 to Vobiz during a live call!
+    # Tier 3: If specific asset was not found, check if active custom audio exists in Supabase
+    fallback_aid = get_effective_audio_id()
+    if fallback_aid and fallback_aid != clean_id and fallback_aid != base_id:
+        fb_asset = get_audio_asset(fallback_aid)
+        if fb_asset:
+            fb_bytes = fb_asset.get("audio_bytes")
+            if fb_bytes and len(fb_bytes) > 0:
+                logger.info(f"Serving active custom audio fallback '{fallback_aid}' for missing request '{asset_id}'")
+                m_type = "audio/wav" if fb_bytes.startswith(b"RIFF") else "audio/mpeg"
+                return make_byte_response(fb_bytes, m_type, f"{fallback_aid}.wav")
+
+    # Tier 4: Infallible fallback - never return 404 to Vobiz during a live call!
     for fb_name in ["test1.wav", "farm_alert.wav"]:
         fb_path = os.path.join(STATIC_DIR, "audio", fb_name)
         if os.path.exists(fb_path):
@@ -311,7 +324,8 @@ async def answer_webhook(
                 base_url = f"https://{v_url}" if not v_url.startswith("http") else v_url
 
     schedule = get_schedule(schedule_id) if schedule_id else None
-    target_audio_id = audio_id or (schedule.get("audio_id") if schedule else None) or settings.get("default_audio_id") or "test1-sample-id"
+    raw_aid = audio_id or (schedule.get("audio_id") if schedule else None)
+    target_audio_id = get_effective_audio_id(raw_aid)
     target_play_mode = play_mode or (schedule.get("play_mode") if schedule else "audio")
     raw_loop = loop if loop is not None else (schedule.get("loop_count", 1) if schedule else 1)
     target_loop = max(1, min(int(raw_loop or 1), 10))
@@ -607,7 +621,20 @@ async def api_upload_audio(audio_file: UploadFile = File(...), name: Optional[st
         file_bytes=content,
         custom_name=name or audio_file.filename
     )
+    # Immediately make the new upload the default audio prompt for calls
+    try:
+        update_settings({"default_audio_id": aid})
+    except Exception as e:
+        logger.warning(f"Could not update default_audio_id: {e}")
     return {"success": True, "audio_id": aid}
+
+@app.post("/api/audio/{asset_id}/set-default")
+def api_set_default_audio(asset_id: str):
+    asset = get_audio_asset(asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Audio asset not found")
+    update_settings({"default_audio_id": asset["id"]})
+    return {"success": True, "default_audio_id": asset["id"]}
 
 @app.delete("/api/audio/{asset_id}")
 def api_delete_audio(asset_id: str):

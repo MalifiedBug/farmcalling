@@ -615,6 +615,13 @@ def add_audio_asset(
         duration_seconds, file_size_bytes, tts_text, tts_voice,
         audio_bytes, external_url, now
     ))
+    # Automatically set newly uploaded/recorded audio as the system default audio in Supabase
+    if source_type in ("upload", "recorded") and not name.startswith("Test "):
+        try:
+            update_settings({"default_audio_id": asset_id})
+            logger.info(f"Set newly created audio {asset_id} ('{name}') as active default_audio_id in settings.")
+        except Exception as e:
+            logger.warning(f"Could not auto-set default_audio_id for {asset_id}: {e}")
     return asset_id
 
 def get_audio_assets(include_test_stubs: bool = False) -> List[Dict[str, Any]]:
@@ -631,12 +638,70 @@ def get_audio_assets(include_test_stubs: bool = False) -> List[Dict[str, Any]]:
 
 def get_audio_asset(asset_id: str) -> Optional[Dict[str, Any]]:
     """Returns complete audio asset record including binary audio_bytes from Supabase PostgreSQL."""
-    return db_execute("SELECT * FROM audio_assets WHERE id = ?", (asset_id,), fetch="one")
+    if not asset_id:
+        return None
+    clean = str(asset_id).strip()
+    base = clean
+    for sfx in [".wav", ".mp3", ".ogg", ".webm"]:
+        if base.lower().endswith(sfx):
+            base = base[:-len(sfx)]
+            break
+    return db_execute("""
+        SELECT * FROM audio_assets
+        WHERE id = ? OR id = ? OR filename = ? OR filename = ? OR name = ?
+        ORDER BY (audio_bytes IS NOT NULL) DESC, created_at DESC
+        LIMIT 1
+    """, (clean, base, clean, f"{base}.wav", clean), fetch="one")
 
 def get_audio_bytes(asset_id: str) -> Optional[bytes]:
     """Retrieves only the raw audio bytes for an asset directly from Supabase PostgreSQL."""
-    row = db_execute("SELECT audio_bytes FROM audio_assets WHERE id = ?", (asset_id,), fetch="one")
-    return row["audio_bytes"] if row else None
+    asset = get_audio_asset(asset_id)
+    return asset.get("audio_bytes") if asset else None
+
+def get_latest_custom_audio_id() -> Optional[str]:
+    """
+    Returns the ID of the most recently uploaded or recorded custom audio asset
+    persisted in Supabase PostgreSQL that is audible (> 500 bytes).
+    """
+    row = db_execute("""
+        SELECT id FROM audio_assets
+        WHERE source_type IN ('upload', 'recorded')
+          AND LOWER(name) NOT LIKE ?
+          AND id NOT IN ('test1-sample-id', 'farm-alert-sample-id')
+          AND (audio_bytes IS NOT NULL OR file_size_bytes > 500)
+        ORDER BY created_at DESC
+        LIMIT 1
+    """, ("test %",), fetch="one")
+    return row["id"] if row else None
+
+def get_effective_audio_id(requested_id: Optional[str] = None) -> str:
+    """
+    Resolves the canonical audio asset ID to play for calls.
+    Order of precedence:
+    1. Explicit requested_id if provided, non-empty, and valid in DB
+    2. Persistent default_audio_id in settings if valid in DB and not a sample
+    3. Most recent custom uploaded or recorded audio in Supabase
+    4. Fallback to 'test1-sample-id'
+    """
+    if requested_id:
+        clean = str(requested_id).strip()
+        if clean and clean.lower() not in ("", "none", "[none / system default]"):
+            asset = get_audio_asset(clean)
+            if asset:
+                return asset["id"]
+
+    settings = get_settings()
+    def_id = settings.get("default_audio_id", "").strip()
+    if def_id and def_id not in ("", "none", "test1-sample-id"):
+        asset = get_audio_asset(def_id)
+        if asset:
+            return asset["id"]
+
+    latest_custom = get_latest_custom_audio_id()
+    if latest_custom:
+        return latest_custom
+
+    return def_id if def_id else "test1-sample-id"
 
 def delete_audio_asset(asset_id: str) -> bool:
     asset = get_audio_asset(asset_id)
@@ -648,7 +713,12 @@ def delete_audio_asset(asset_id: str) -> bool:
             os.remove(fp)
         except Exception:
             pass
-    db_execute("DELETE FROM audio_assets WHERE id = ?", (asset_id,))
+    db_execute("DELETE FROM audio_assets WHERE id = ?", (asset["id"],))
+    # If the deleted asset was the default_audio_id, update to latest custom or fallback
+    settings = get_settings()
+    if settings.get("default_audio_id") == asset["id"]:
+        new_def = get_latest_custom_audio_id() or "test1-sample-id"
+        update_settings({"default_audio_id": new_def})
     return True
 
 # --- Schedules Helpers ---

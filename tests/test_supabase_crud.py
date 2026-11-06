@@ -32,6 +32,8 @@ from database import (
     update_call_log_by_uuid,
     get_call_logs,
     get_call_stats,
+    get_effective_audio_id,
+    get_latest_custom_audio_id,
     db_execute
 )
 
@@ -154,6 +156,46 @@ class TestSupabasePersistence(unittest.TestCase):
 
         # Clean up test log
         db_execute("DELETE FROM call_logs WHERE id = ?", (log_id,))
+
+    def test_06_effective_audio_selection_and_auto_default(self):
+        """Verifies custom uploaded audio is automatically prioritized and set as default."""
+        sample_bytes = b"RIFF" + b"\x00" * 40 + b"WAVEfmt " + b"\x00" * 1000
+        test_audio_name = f"Farmer Broadcast Test {uuid.uuid4().hex[:6]}"
+
+        aid = add_audio_asset(
+            name=test_audio_name,
+            filename=f"farmer_{uuid.uuid4().hex[:8]}.wav",
+            filepath=f"/tmp/farmer_{uuid.uuid4().hex[:8]}.wav",
+            mime_type="audio/wav",
+            source_type="upload",
+            duration_seconds=3.5,
+            file_size_bytes=len(sample_bytes),
+            audio_bytes=sample_bytes
+        )
+        try:
+            # 1. Check auto-set default in settings
+            curr_def = get_setting("default_audio_id")
+            self.assertEqual(curr_def, aid)
+
+            # 2. Check get_effective_audio_id without params
+            eff_id = get_effective_audio_id()
+            self.assertEqual(eff_id, aid)
+
+            # 3. Check get_effective_audio_id with empty/placeholder params
+            self.assertEqual(get_effective_audio_id(""), aid)
+            self.assertEqual(get_effective_audio_id("[None / System Default]"), aid)
+
+            # 4. Check asset resolution by ID and filename
+            by_id = get_audio_asset(aid)
+            self.assertIsNotNone(by_id)
+            self.assertEqual(by_id["name"], test_audio_name)
+
+            by_fname = get_audio_asset(f"{aid}.wav")
+            self.assertIsNotNone(by_fname)
+            self.assertEqual(by_fname["id"], aid)
+        finally:
+            delete_audio_asset(aid)
+            update_settings({"default_audio_id": "16cf3bdb-54e6-47e4-bd78-55fce499b6ef"})
 
 if __name__ == "__main__":
     unittest.main()

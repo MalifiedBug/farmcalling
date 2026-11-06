@@ -371,19 +371,38 @@
       }
     }
 
-    async function loadAudioDropdowns() {
+    async function loadAudioDropdowns(selectedId = null) {
       try {
-        const res = await fetch('/api/audio');
-        const assets = await res.json();
+        const [aRes, sRes] = await Promise.all([fetch('/api/audio'), fetch('/api/settings')]);
+        const assets = await aRes.json();
+        const settings = await sRes.json();
+        const currentDefault = selectedId || settings.default_audio_id;
+
         let opts = '';
         if (assets && assets.length > 0) {
-          opts = assets.map(a => `<option value="${a.id}">${a.name} (${a.source_type.toUpperCase()})</option>`).join('');
+          // Sort so the active default prompt appears first
+          const sorted = [...assets].sort((a, b) => {
+            if (a.id === currentDefault) return -1;
+            if (b.id === currentDefault) return 1;
+            return 0;
+          });
+          opts = sorted.map(a => {
+            const isDef = (a.id === currentDefault);
+            return `<option value="${a.id}" ${isDef ? 'selected' : ''}>${isDef ? '⭐ Active Prompt: ' : ''}${a.name} (${a.source_type.toUpperCase()})</option>`;
+          }).join('');
         } else {
           opts = '<option value="test1-sample-id">test1 (Microphone Recording) (RECORDED)</option>';
         }
-        document.getElementById('instant-audio-select').innerHTML = opts;
+        const instSelect = document.getElementById('instant-audio-select');
+        if (instSelect) {
+          instSelect.innerHTML = opts;
+          if (currentDefault) instSelect.value = currentDefault;
+        }
         const sSelect = document.getElementById('sched-audio-select');
-        if (sSelect) sSelect.innerHTML = opts;
+        if (sSelect) {
+          sSelect.innerHTML = opts;
+          if (currentDefault) sSelect.value = currentDefault;
+        }
       } catch (e) {
         console.error('Error loading audio assets:', e);
       }
@@ -1020,10 +1039,21 @@
       const formData = new FormData();
       formData.append('audio_file', recordedBlob, 'mic_record.wav');
       formData.append('name', name);
-      const res = await fetch('/api/audio/upload', { method: 'POST', body: formData });
-      if (res.ok) {
-        alert('Voice recording saved to library!');
-        loadAudioLibrary();
+      try {
+        const res = await fetch('/api/audio/upload', { method: 'POST', body: formData });
+        if (res.ok) {
+          const data = await res.json();
+          const newId = data.audio_id;
+          await fetch(`/api/audio/${newId}/set-default`, { method: 'POST' });
+          alert('🎉 Voice recording saved to Supabase and set as active call prompt!');
+          document.getElementById('mic-name').value = '';
+          await loadAudioLibrary();
+          await loadAudioDropdowns(newId);
+        } else {
+          alert('Failed to save voice recording.');
+        }
+      } catch (err) {
+        alert('Error saving recording: ' + err.message);
       }
     }
 
@@ -1034,39 +1064,84 @@
       const formData = new FormData();
       formData.append('audio_file', f);
       formData.append('name', name || f.name);
-      const res = await fetch('/api/audio/upload', { method: 'POST', body: formData });
-      if (res.ok) {
-        alert('Audio uploaded successfully!');
-        loadAudioLibrary();
+      try {
+        const res = await fetch('/api/audio/upload', { method: 'POST', body: formData });
+        if (res.ok) {
+          const data = await res.json();
+          const newId = data.audio_id;
+          await fetch(`/api/audio/${newId}/set-default`, { method: 'POST' });
+          alert('🎉 Audio uploaded to Supabase and set as active call prompt!');
+          document.getElementById('upload-file').value = '';
+          document.getElementById('upload-name').value = '';
+          await loadAudioLibrary();
+          await loadAudioDropdowns(newId);
+        } else {
+          alert('Failed to upload audio.');
+        }
+      } catch (err) {
+        alert('Error uploading audio: ' + err.message);
+      }
+    }
+
+    async function setDefaultAudio(id) {
+      try {
+        await fetch(`/api/audio/${id}/set-default`, { method: 'POST' });
+        await loadAudioLibrary();
+        await loadAudioDropdowns(id);
+      } catch (err) {
+        alert('Error setting default audio: ' + err.message);
       }
     }
 
     async function loadAudioLibrary() {
-      const res = await fetch('/api/audio');
-      const data = await res.json();
-      const list = document.getElementById('audio-library-list');
-      if (data.length === 0) {
-        list.innerHTML = '<p class="text-xs text-gray-500">No audio assets in library.</p>';
-        return;
+      try {
+        const [aRes, sRes] = await Promise.all([fetch('/api/audio'), fetch('/api/settings')]);
+        const data = await aRes.json();
+        const settings = await sRes.json();
+        const currentDefault = settings.default_audio_id;
+
+        const list = document.getElementById('audio-library-list');
+        if (!data || data.length === 0) {
+          list.innerHTML = '<p class="text-xs text-gray-500">No audio assets in library.</p>';
+          return;
+        }
+
+        // Sort: active default first, then newest
+        const sorted = [...data].sort((a, b) => {
+          if (a.id === currentDefault) return -1;
+          if (b.id === currentDefault) return 1;
+          return 0;
+        });
+
+        list.innerHTML = sorted.map(a => {
+          const isDef = (a.id === currentDefault);
+          return `
+            <div class="flex items-center justify-between p-3 bg-[#1e293b] rounded-lg text-xs ${isDef ? 'border border-emerald-500/40 bg-emerald-950/20' : ''}">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <p class="font-medium text-white">${a.name}</p>
+                  ${isDef ? '<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800 font-semibold">⭐ ACTIVE PROMPT</span>' : ''}
+                </div>
+                <p class="text-[10px] text-gray-400">Type: ${a.source_type} | Format: ${a.mime_type} | Size: ${Math.round((a.file_size_bytes||0)/1024)} KB</p>
+              </div>
+              <div class="flex items-center space-x-3">
+                <audio src="/audio/${a.id}" controls class="h-8"></audio>
+                ${!isDef ? `<button onclick="setDefaultAudio('${a.id}')" class="text-xs px-2.5 py-1 rounded bg-blue-600/20 text-blue-400 border border-blue-600/40 hover:bg-blue-600/40 transition">Set Active</button>` : ''}
+                <button onclick="deleteAudio('${a.id}')" class="text-rose-400 hover:underline">Delete</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Error loading audio library:', err);
       }
-      list.innerHTML = data.map(a => `
-        <div class="flex items-center justify-between p-3 bg-[#1e293b] rounded-lg text-xs">
-          <div>
-            <p class="font-medium text-white">${a.name}</p>
-            <p class="text-[10px] text-gray-400">Type: ${a.source_type} | Format: ${a.mime_type}</p>
-          </div>
-          <div class="flex items-center space-x-3">
-            <audio src="/audio/${a.id}" controls class="h-8"></audio>
-            <button onclick="deleteAudio('${a.id}')" class="text-rose-400 hover:underline">Delete</button>
-          </div>
-        </div>
-      `).join('');
     }
 
     async function deleteAudio(id) {
       if (!confirm('Delete audio?')) return;
       await fetch(`/api/audio/${id}`, { method: 'DELETE' });
-      loadAudioLibrary();
+      await loadAudioLibrary();
+      await loadAudioDropdowns();
     }
 
     async function loadCallHistory() {

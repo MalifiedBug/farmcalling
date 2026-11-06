@@ -4,6 +4,8 @@ Verifies the Streamlit dashboard and navigation render without runtime errors.
 """
 
 import unittest
+import os
+os.environ["USE_SQLITE"] = "true"
 from streamlit.testing.v1 import AppTest
 
 class TestStreamlitApp(unittest.TestCase):

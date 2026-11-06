@@ -12,6 +12,8 @@ from database import (
     create_schedule,
     get_schedules,
     get_audio_assets,
+    get_audio_asset,
+    get_effective_audio_id,
     update_schedule_status,
     delete_schedule,
     get_settings
@@ -185,10 +187,21 @@ with st.expander("➕ Create New Call Schedule", expanded=True):
 
         st.markdown("#### 🎵 Audio Prompt & Playback Flow")
         audio_assets = fetch_audio_assets()
-        audio_map = {"[None / System Default]": ""}
+        effective_aid = get_effective_audio_id()
+        audio_map = {}
+
+        eff_asset = get_audio_asset(effective_aid)
+        if eff_asset:
+            eff_label = f"⭐ Active Prompt: {eff_asset['name']} ({eff_asset['source_type'].capitalize()})"
+            audio_map[eff_label] = eff_asset["id"]
+
         for a in audio_assets:
-            label = f"{a['name']} ({a['source_type'].capitalize()})"
-            audio_map[label] = a["id"]
+            if a["id"] != effective_aid:
+                label = f"{a['name']} ({a['source_type'].capitalize()})"
+                audio_map[label] = a["id"]
+
+        if not audio_map:
+            audio_map = {"Default System Audio": "test1-sample-id"}
 
         col_audio, col_mode = st.columns([2, 1])
         with col_audio:

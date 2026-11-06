@@ -12,6 +12,8 @@ from database import (
     get_call_logs,
     get_schedules,
     get_audio_assets,
+    get_audio_asset,
+    get_effective_audio_id,
     get_settings
 )
 from scheduler import trigger_call_now
@@ -62,10 +64,23 @@ with left_col:
         )
 
         audio_assets = get_audio_assets()
-        audio_options = {"Default System Audio": ""}
+        effective_aid = get_effective_audio_id()
+        audio_options = {}
+
+        # Pre-select currently active default prompt at the very top
+        eff_asset = get_audio_asset(effective_aid)
+        if eff_asset:
+            eff_label = f"⭐ Active Prompt: {eff_asset['name']} ({eff_asset['source_type'].upper()})"
+            audio_options[eff_label] = eff_asset["id"]
+
+        # Add all other tracks
         for a in audio_assets:
-            label = f"{a['name']} ({a['source_type'].upper()} - {a['duration_seconds']}s)"
-            audio_options[label] = a["id"]
+            if a["id"] != effective_aid:
+                label = f"{a['name']} ({a['source_type'].upper()} - {a['duration_seconds']}s)"
+                audio_options[label] = a["id"]
+
+        if not audio_options:
+            audio_options = {"Default System Audio": "test1-sample-id"}
 
         selected_audio_label = st.selectbox("Select Audio Prompt to Play", list(audio_options.keys()))
         selected_audio_id = audio_options[selected_audio_label]
