@@ -175,6 +175,28 @@
         </button>
       </div>
 
+      <!-- 24/7 Automated Dispatch Heartbeat Banner -->
+      <div class="card p-4 rounded-xl border border-blue-500/30 bg-blue-950/20 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div class="flex items-center space-x-2">
+            <span id="cron-pulse-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="text-xs font-semibold text-white tracking-wide uppercase">24/7 Automated Dispatcher (IST)</span>
+            <span id="cron-last-ping" class="text-[11px] px-2 py-0.5 rounded bg-gray-800 text-gray-300 font-mono">Checking heartbeat...</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">
+            Active schedules evaluate continuously via GitHub Actions, free webhook cron runners, and active browser tabs.
+          </p>
+        </div>
+        <div class="flex items-center space-x-2">
+          <button onclick="triggerCronNow()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded-lg font-medium flex items-center shadow">
+            <i data-feather="play" class="w-3.5 h-3.5 mr-1.5"></i> Check Now
+          </button>
+          <button onclick="copyCronUrl()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs px-3 py-1.5 rounded-lg font-mono flex items-center border border-gray-700">
+            <i data-feather="copy" class="w-3.5 h-3.5 mr-1.5"></i> Copy Webhook
+          </button>
+        </div>
+      </div>
+
       <div class="card p-6 rounded-xl space-y-4">
         <h3 class="text-base font-semibold">Active Campaigns & Schedules</h3>
         <div id="schedules-table" class="overflow-x-auto">
@@ -814,6 +836,68 @@
       await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
       loadSchedules();
     }
+
+    async function updateCronHeartbeatStatus() {
+      try {
+        const res = await fetch('/api/cron/status');
+        if (res.ok) {
+          const d = await res.json();
+          const dot = document.getElementById('cron-pulse-dot');
+          const pingTxt = document.getElementById('cron-last-ping');
+          if (pingTxt) {
+            if (d.seconds_since_last_ping !== null && d.seconds_since_last_ping !== undefined) {
+              const mins = Math.floor(d.seconds_since_last_ping / 60);
+              const secs = d.seconds_since_last_ping % 60;
+              const timeStr = mins > 0 ? `${mins}m ${secs}s ago` : `${secs}s ago`;
+              pingTxt.innerText = `Last Heartbeat: ${timeStr}`;
+              if (d.is_active) {
+                pingTxt.className = 'text-[11px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 font-mono border border-emerald-800';
+                if (dot) dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+              } else {
+                pingTxt.className = 'text-[11px] px-2 py-0.5 rounded bg-amber-950 text-amber-400 font-mono border border-amber-800';
+                if (dot) dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+              }
+            } else {
+              pingTxt.innerText = 'No heartbeat logged yet';
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    async function triggerCronNow() {
+      try {
+        const res = await fetch('/api/cron');
+        const data = await res.json();
+        alert(`✅ Cron Check Completed!\n• Current Time: ${data.current_time_ist}\n• Active Campaigns: ${data.total_active_schedules}\n• Triggered: ${data.triggered_count}`);
+        loadSchedules();
+        updateCronHeartbeatStatus();
+      } catch (e) {
+        alert('Error triggering cron: ' + e.message);
+      }
+    }
+
+    function copyCronUrl() {
+      const url = `${window.location.origin}/api/cron`;
+      navigator.clipboard.writeText(url);
+      alert(`Webhook Cron URL copied to clipboard:\n${url}\n\nYou can use this in free pingers like cron-job.org or UptimeRobot.`);
+    }
+
+    // Client-side automatic heartbeat: runs every 30 seconds while tab is open
+    setInterval(async () => {
+      try {
+        const res = await fetch('/api/cron');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.triggered_count > 0) {
+            loadSchedules();
+          }
+        }
+        updateCronHeartbeatStatus();
+      } catch (e) {}
+    }, 30000);
+
+    setTimeout(updateCronHeartbeatStatus, 1500);
 
     // Audio recording logic - High fidelity 16kHz mono 16-bit PCM WAV encoder
     function encodeWAV(samples, sampleRate) {

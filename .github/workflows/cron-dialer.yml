@@ -1,0 +1,20 @@
+name: FarmCalling Automated Telephony Heartbeat
+
+on:
+  schedule:
+    # Runs every 5 minutes 24/7 (standard GitHub Actions free runner)
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Allows 1-click manual trigger from the GitHub Actions tab
+
+jobs:
+  telephony-heartbeat:
+    name: Ping FarmCalling Cron Dialer
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send Heartbeat to FarmCalling Vercel Endpoint
+        run: |
+          echo "Pinging FarmCalling production dialer..."
+          RESPONSE=$(curl -s -f -m 15 -w "\nHTTP_STATUS:%{http_code}" "https://farmcalling2.vercel.app/api/cron" || echo "PING_COMPLETED")
+          echo "Dialer Response: $RESPONSE"
+

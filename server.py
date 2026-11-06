@@ -10,6 +10,8 @@ Provides:
 """
 
 import os
+import time
+import threading
 import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -59,6 +61,35 @@ app.add_middleware(
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+# --- Opportunistic Background Dispatcher ---
+# Evaluates due schedules in IST whenever incoming traffic hits the server
+_last_opportunistic_check = 0.0
+
+def run_due_schedules_check():
+    """Worker that evaluates and triggers active schedules in Indian Standard Time (IST)."""
+    try:
+        from scheduler import execute_call_job, is_schedule_due_now
+        active_schedules = get_schedules(status_filter="active")
+        for s in active_schedules:
+            if is_schedule_due_now(s):
+                logger.info(f"Opportunistic Dispatcher triggering due campaign in IST: {s.get('name')} ({s.get('id')})")
+                execute_call_job(s["id"])
+    except Exception as e:
+        logger.warning(f"Opportunistic check encountered error: {e}")
+
+@app.middleware("http")
+async def opportunistic_cron_middleware(request: Request, call_next):
+    global _last_opportunistic_check
+    now_ts = time.time()
+    path = request.url.path
+    # Trigger background evaluation if > 25 seconds elapsed and not a media/static fetch
+    if (now_ts - _last_opportunistic_check > 25) and not path.startswith("/audio") and not path.startswith("/static"):
+        _last_opportunistic_check = now_ts
+        threading.Thread(target=run_due_schedules_check, daemon=True).start()
+
+    response = await call_next(request)
+    return response
 
 # --- Web UI ---
 @app.get("/", response_class=HTMLResponse)
@@ -358,15 +389,25 @@ async def hangup_webhook(request: Request):
 # --- Vercel Cron Endpoint ---
 @app.get("/api/cron")
 @app.get("/cron")
+@app.post("/api/cron")
+@app.post("/api/cron/trigger")
 def vercel_cron_handler():
     """
-    Invoked periodically by Vercel Cron or external runner to process active schedules.
+    Invoked periodically by external runners (GitHub Actions, cron-job.org, browser heartbeat, Vercel Cron).
     Evaluates schedules with high precision using Indian Standard Time (Asia/Kolkata, UTC+5:30).
     """
     from scheduler import execute_call_job, is_schedule_due_now
     import pytz
     tz = pytz.timezone("Asia/Kolkata")
     now_ist = datetime.now(tz)
+    now_iso = now_ist.isoformat()
+
+    # Record heartbeat in settings
+    try:
+        update_settings({"last_cron_ping_at": now_iso})
+    except Exception:
+        pass
+
     schedules = get_schedules(status_filter="active")
     triggered = []
 
@@ -375,7 +416,11 @@ def vercel_cron_handler():
             if is_schedule_due_now(s):
                 logger.info(f"Cron executing due schedule in IST: {s['name']} ({s['id']})")
                 execute_call_job(s["id"])
-                triggered.append(s["id"])
+                triggered.append({
+                    "id": s["id"],
+                    "name": s.get("name"),
+                    "to": s.get("to_number")
+                })
         except Exception as e:
             logger.error(f"Error evaluating schedule {s.get('id')}: {e}")
 
@@ -385,7 +430,41 @@ def vercel_cron_handler():
         "timezone": "Asia/Kolkata (IST)",
         "total_active_schedules": len(schedules),
         "triggered_count": len(triggered),
-        "triggered_ids": triggered
+        "triggered_schedules": triggered,
+        "last_ping_recorded": now_iso
+    }
+
+@app.get("/api/cron/status")
+def api_cron_status():
+    """Returns real-time status of automated campaign heartbeat and external pingers."""
+    settings = get_settings()
+    last_ping = settings.get("last_cron_ping_at")
+    active_schedules = get_schedules(status_filter="active")
+    import pytz
+    tz = pytz.timezone("Asia/Kolkata")
+    now_ist = datetime.now(tz)
+
+    diff_seconds = None
+    is_alive = False
+    if last_ping:
+        try:
+            last_dt = datetime.fromisoformat(last_ping)
+            if last_dt.tzinfo is None:
+                last_dt = tz.localize(last_dt)
+            diff_seconds = int((now_ist - last_dt).total_seconds())
+            # Considered alive if triggered within the last 6 minutes (matching GitHub Actions 5m interval)
+            is_alive = diff_seconds <= 360
+        except Exception:
+            pass
+
+    base_url = settings.get("webhook_base_url", "https://farmcalling2.vercel.app").rstrip("/")
+    return {
+        "is_active": is_alive,
+        "last_ping_at": last_ping,
+        "seconds_since_last_ping": diff_seconds,
+        "active_schedules_count": len(active_schedules),
+        "cron_webhook_url": f"{base_url}/api/cron",
+        "current_time_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S %Z")
     }
 
 # --- REST API for Dashboard ---

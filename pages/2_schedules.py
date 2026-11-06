@@ -250,6 +250,32 @@ with st.expander("➕ Create New Call Schedule", expanded=True):
 
 # Section 2: Manage Existing Schedules
 st.markdown("---")
+
+with st.container(border=True):
+    col_stat1, col_stat2 = st.columns([3, 1])
+    with col_stat1:
+        st.markdown("##### ⚡ 24/7 Automated Dispatcher (IST)")
+        last_cron_ping = settings.get("last_cron_ping_at")
+        if last_cron_ping:
+            st.caption(f"🟢 **Heartbeat Engine Active** | Last Ping: `{last_cron_ping[:19].replace('T', ' ')} IST`  \nMonitored continuously via GitHub Actions (every 5 min), free webhooks, and active browser tabs.")
+        else:
+            st.caption("ℹ️ **Heartbeat Engine Ready** | Monitored continuously via GitHub Actions (every 5 min), free webhooks, and active browser tabs.")
+    with col_stat2:
+        if st.button("⚡ Check & Dial Due Now", key="btn_force_cron", use_container_width=True):
+            from scheduler import is_schedule_due_now, execute_call_job
+            active_list = get_schedules(status_filter="active")
+            triggered_any = []
+            for item in active_list:
+                if is_schedule_due_now(item):
+                    execute_call_job(item["id"])
+                    triggered_any.append(item["name"])
+            st.cache_data.clear()
+            if triggered_any:
+                st.success(f"Dispatched {len(triggered_any)} due campaigns: {', '.join(triggered_any)}")
+            else:
+                st.info("Evaluated active campaigns in IST. No calls are due at this minute.")
+            st.rerun()
+
 st.subheader("📋 Scheduled Campaigns")
 
 schedules = fetch_schedules()
