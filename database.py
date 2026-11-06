@@ -158,7 +158,7 @@ def get_db_mode() -> str:
     url = get_database_url()
     if url and psycopg2 is not None and (url.startswith("postgres://") or url.startswith("postgresql://")):
         try:
-            test_conn = psycopg2.connect(url, connect_timeout=5)
+            test_conn = psycopg2.connect(url, connect_timeout=10)
             test_conn.close()
             _db_mode = "postgres"
             logger.info("Database initialized: connected to Supabase PostgreSQL (Persistent Storage).")
@@ -579,13 +579,15 @@ def add_audio_asset(
     ))
     return asset_id
 
-def get_audio_assets() -> List[Dict[str, Any]]:
-    """Returns list of audio assets without streaming the entire audio_bytes BLOB."""
-    return db_execute("""
+def get_audio_assets(include_test_stubs: bool = False) -> List[Dict[str, Any]]:
+    """Returns list of audible audio assets, filtering out 0-second unit test stubs by default."""
+    filter_sql = "" if include_test_stubs else "WHERE (source_type = 'tts' OR file_size_bytes >= 1000)"
+    return db_execute(f"""
         SELECT id, name, filename, filepath, mime_type, source_type,
                duration_seconds, file_size_bytes, tts_text, tts_voice,
                external_url, (audio_bytes IS NOT NULL) AS has_audio_bytes, created_at
         FROM audio_assets
+        {filter_sql}
         ORDER BY created_at DESC
     """, fetch="all") or []
 

@@ -77,16 +77,95 @@ with st.expander("➕ Create New Call Schedule", expanded=True):
             st.info(f"🔄 Call will execute **every {interval_val} {interval_unit}** continuously until paused.")
 
         else: # Daily / Recurring Cron
-            c_cron_mode, c_cron_val = st.columns([1, 2])
-            with c_cron_mode:
-                cron_preset = st.selectbox("Preset", ["Daily at specific time", "Custom Cron Expression"])
-            with c_cron_val:
-                if cron_preset == "Daily at specific time":
-                    daily_time = st.time_input("Time of day", value=time(9, 0))
-                    cron_expr = f"{daily_time.minute} {daily_time.hour} * * *"
-                    st.info(f"⏰ Call will fire every day at **{daily_time.strftime('%I:%M %p')}**")
-                else:
-                    cron_expr = st.text_input("5-part Cron Expression", value="0 9 * * 1-5", help="Standard cron: minute hour day month day-of-week")
+            st.markdown("##### 🗓️ Human-Friendly Recurrence Builder")
+            c_freq, c_time_col = st.columns([1, 1])
+            with c_freq:
+                freq_choice = st.selectbox(
+                    "How often should this call repeat?",
+                    [
+                        "Every Day (Daily)",
+                        "Weekdays Only (Monday to Friday)",
+                        "Weekends Only (Saturday & Sunday)",
+                        "Specific Days of the Week",
+                        "Twice Daily (Morning & Evening)",
+                        "Monthly (On a specific day of the month)",
+                        "Hourly (Every hour at specific minute)",
+                        "Custom Cron Expression (Advanced)"
+                    ]
+                )
+
+            cron_human_desc = ""
+
+            if freq_choice == "Every Day (Daily)":
+                with c_time_col:
+                    t_val = st.time_input("Call Time", value=time(9, 0), key="daily_t")
+                cron_expr = f"{t_val.minute} {t_val.hour} * * *"
+                cron_human_desc = f"Every single day at **{t_val.strftime('%I:%M %p')}** ({tz_str})"
+
+            elif freq_choice == "Weekdays Only (Monday to Friday)":
+                with c_time_col:
+                    t_val = st.time_input("Call Time (Mon - Fri)", value=time(9, 0), key="wd_t")
+                cron_expr = f"{t_val.minute} {t_val.hour} * * 1-5"
+                cron_human_desc = f"Every weekday (Monday to Friday) at **{t_val.strftime('%I:%M %p')}** ({tz_str})"
+
+            elif freq_choice == "Weekends Only (Saturday & Sunday)":
+                with c_time_col:
+                    t_val = st.time_input("Call Time (Sat & Sun)", value=time(9, 0), key="we_t")
+                cron_expr = f"{t_val.minute} {t_val.hour} * * 6,0"
+                cron_human_desc = f"Every weekend (Saturday & Sunday) at **{t_val.strftime('%I:%M %p')}** ({tz_str})"
+
+            elif freq_choice == "Specific Days of the Week":
+                day_map = {
+                    "Monday": 1, "Tuesday": 2, "Wednesday": 3,
+                    "Thursday": 4, "Friday": 5, "Saturday": 6, "Sunday": 0
+                }
+                selected_days = st.multiselect(
+                    "Select Target Days",
+                    options=list(day_map.keys()),
+                    default=["Monday", "Wednesday", "Friday"],
+                    key="spec_days"
+                )
+                with c_time_col:
+                    t_val = st.time_input("Call Time on Selected Days", value=time(9, 0), key="spec_t")
+
+                day_nums = [str(day_map[d]) for d in selected_days]
+                cron_days = ",".join(day_nums) if day_nums else "*"
+                cron_expr = f"{t_val.minute} {t_val.hour} * * {cron_days}"
+                day_names = ", ".join(selected_days) if selected_days else "Every day"
+                cron_human_desc = f"Every **{day_names}** at **{t_val.strftime('%I:%M %p')}** ({tz_str})"
+
+            elif freq_choice == "Twice Daily (Morning & Evening)":
+                with c_time_col:
+                    c_m, c_e = st.columns(2)
+                    with c_m:
+                        t_m = st.time_input("Morning Time", value=time(8, 0), key="td_m")
+                    with c_e:
+                        t_e = st.time_input("Evening Time", value=time(18, 0), key="td_e")
+                cron_expr = f"{t_m.minute} {t_m.hour},{t_e.hour} * * *"
+                cron_human_desc = f"Twice daily at **{t_m.strftime('%I:%M %p')}** and **{t_e.strftime('%I:%M %p')}** ({tz_str})"
+
+            elif freq_choice == "Monthly (On a specific day of the month)":
+                c_m_day, c_m_t = st.columns(2)
+                with c_m_day:
+                    m_day = st.number_input("Day of Month (1 - 31)", min_value=1, max_value=31, value=1, key="mon_day")
+                with c_m_t:
+                    t_val = st.time_input("Call Time", value=time(10, 0), key="mon_t")
+                cron_expr = f"{t_val.minute} {t_val.hour} {m_day} * *"
+                suff = "th" if 11 <= m_day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(m_day % 10, "th")
+                cron_human_desc = f"On the **{m_day}{suff} of every month** at **{t_val.strftime('%I:%M %p')}** ({tz_str})"
+
+            elif freq_choice == "Hourly (Every hour at specific minute)":
+                with c_time_col:
+                    m_val = st.number_input("At minute of every hour (0 - 59)", min_value=0, max_value=59, value=0, key="hrly_m")
+                cron_expr = f"{m_val} * * * *"
+                cron_human_desc = f"Every hour at **:{m_val:02d}** minutes past the hour ({tz_str})"
+
+            else: # Custom Cron Expression (Advanced)
+                with c_time_col:
+                    cron_expr = st.text_input("5-part Cron Expression", value="0 9 * * 1-5", help="Format: minute hour day-of-month month day-of-week")
+                cron_human_desc = f"Custom Schedule: `{cron_expr}` ({tz_str})"
+
+            st.success(f"⏰ **Active Schedule:** Fires {cron_human_desc}  \n`Cron Expression: {cron_expr}`")
 
         st.markdown("#### 🎵 Audio Prompt & Playback Flow")
         audio_assets = get_audio_assets()

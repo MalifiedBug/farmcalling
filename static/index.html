@@ -407,6 +407,8 @@
       }
     }
 
+    let selectedCronDays = ['1', '2', '3', '4', '5']; // Default Mon-Fri
+
     function updateSchedInputs() {
       const type = document.getElementById('sched-type').value;
       const box = document.getElementById('sched-input-box');
@@ -435,10 +437,248 @@
         `;
       } else {
         box.innerHTML = `
-          <label class="block text-xs font-medium text-gray-300 mb-1">Cron Expression (e.g. 0 9 * * *)</label>
-          <input type="text" id="sched-cron" value="0 9 * * *" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm">
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <label class="block text-xs font-medium text-gray-300">🗓️ Human-Friendly Recurrence</label>
+              <span class="text-[10px] text-gray-400">No cron syntax knowledge needed</span>
+            </div>
+
+            <!-- Quick Presets -->
+            <div class="flex flex-wrap gap-1.5 text-[11px]">
+              <button type="button" onclick="applyCronPreset('daily_morning')" class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700">🌅 8:00 AM Daily</button>
+              <button type="button" onclick="applyCronPreset('weekdays_morning')" class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700">🌾 9:00 AM Mon-Fri</button>
+              <button type="button" onclick="applyCronPreset('daily_evening')" class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700">🌆 6:00 PM Daily</button>
+              <button type="button" onclick="applyCronPreset('twice_daily')" class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700">🚜 8 AM & 6 PM</button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[11px] text-gray-400 mb-1">How often should this call repeat?</label>
+                <select id="cron-freq" onchange="renderCronSubControls()" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-xs">
+                  <option value="daily">Every Day (Daily)</option>
+                  <option value="weekdays" selected>Weekdays Only (Monday to Friday)</option>
+                  <option value="weekends">Weekends Only (Saturday & Sunday)</option>
+                  <option value="specific_days">Specific Days of the Week</option>
+                  <option value="twice_daily">Twice Daily (Morning & Evening)</option>
+                  <option value="monthly">Monthly (Specific Day of Month)</option>
+                  <option value="hourly">Hourly (Every hour at minute)</option>
+                  <option value="custom">Custom Cron Expression (Advanced)</option>
+                </select>
+              </div>
+              <div id="cron-time-box">
+                <!-- Dynamically rendered based on cron-freq -->
+              </div>
+            </div>
+
+            <div id="cron-days-box" class="hidden">
+              <label class="block text-[11px] text-gray-400 mb-1">Select Active Days:</label>
+              <div class="flex flex-wrap gap-1.5" id="cron-day-pills">
+                <!-- Day pills -->
+              </div>
+            </div>
+
+            <!-- Live Human Summary Banner -->
+            <div id="cron-summary-banner" class="p-2.5 rounded-lg bg-blue-950/50 border border-blue-900/60 text-xs flex items-center justify-between">
+              <span id="cron-human-text" class="text-blue-300 font-medium">⏰ Every weekday (Mon-Fri) at 09:00 AM</span>
+              <code id="cron-raw-badge" class="px-2 py-0.5 rounded bg-blue-900/60 text-blue-200 text-[11px] font-mono">0 9 * * 1-5</code>
+            </div>
+
+            <!-- Hidden/Synchronized cron input sent in payload -->
+            <input type="hidden" id="sched-cron" value="0 9 * * 1-5">
+          </div>
         `;
+        renderCronSubControls();
       }
+    }
+
+    function renderCronSubControls() {
+      const freq = document.getElementById('cron-freq').value;
+      const tBox = document.getElementById('cron-time-box');
+      const dBox = document.getElementById('cron-days-box');
+
+      if (freq === 'twice_daily') {
+        dBox.classList.add('hidden');
+        tBox.innerHTML = `
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[11px] text-gray-400 mb-1">Morning Time</label>
+              <input type="time" id="cron-time-1" value="08:00" onchange="recalculateHumanCron()" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-2 py-1.5 text-xs">
+            </div>
+            <div>
+              <label class="block text-[11px] text-gray-400 mb-1">Evening Time</label>
+              <input type="time" id="cron-time-2" value="18:00" onchange="recalculateHumanCron()" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-2 py-1.5 text-xs">
+            </div>
+          </div>
+        `;
+      } else if (freq === 'monthly') {
+        dBox.classList.add('hidden');
+        tBox.innerHTML = `
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[11px] text-gray-400 mb-1">Day of Month (1-31)</label>
+              <input type="number" id="cron-month-day" min="1" max="31" value="1" onchange="recalculateHumanCron()" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-2 py-1.5 text-xs">
+            </div>
+            <div>
+              <label class="block text-[11px] text-gray-400 mb-1">Call Time</label>
+              <input type="time" id="cron-time" value="10:00" onchange="recalculateHumanCron()" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-2 py-1.5 text-xs">
+            </div>
+          </div>
+        `;
+      } else if (freq === 'hourly') {
+        dBox.classList.add('hidden');
+        tBox.innerHTML = `
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-1">At Minute Past Hour (0-59)</label>
+            <input type="number" id="cron-minute" min="0" max="59" value="0" onchange="recalculateHumanCron()" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-2 py-1.5 text-xs">
+          </div>
+        `;
+      } else if (freq === 'custom') {
+        dBox.classList.add('hidden');
+        tBox.innerHTML = `
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-1">5-Part Expression (min hr dom m dow)</label>
+            <input type="text" id="cron-custom-input" value="0 9 * * 1-5" oninput="recalculateHumanCron()" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-2 py-1.5 text-xs font-mono">
+          </div>
+        `;
+      } else {
+        // daily, weekdays, weekends, specific_days
+        tBox.innerHTML = `
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-1">Call Time</label>
+            <input type="time" id="cron-time" value="09:00" onchange="recalculateHumanCron()" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-2 py-1.5 text-xs">
+          </div>
+        `;
+        if (freq === 'specific_days') {
+          dBox.classList.remove('hidden');
+          renderDayPills();
+        } else {
+          dBox.classList.add('hidden');
+        }
+      }
+      recalculateHumanCron();
+    }
+
+    function renderDayPills() {
+      const days = [
+        { id: '1', label: 'Mon' },
+        { id: '2', label: 'Tue' },
+        { id: '3', label: 'Wed' },
+        { id: '4', label: 'Thu' },
+        { id: '5', label: 'Fri' },
+        { id: '6', label: 'Sat' },
+        { id: '0', label: 'Sun' }
+      ];
+      const pillsBox = document.getElementById('cron-day-pills');
+      if (!pillsBox) return;
+      pillsBox.innerHTML = days.map(d => {
+        const active = selectedCronDays.includes(d.id);
+        const cls = active ? 'bg-blue-600 text-white border-blue-500 font-semibold' : 'bg-gray-800 text-gray-400 border-gray-700';
+        return `<button type="button" onclick="toggleCronDay('${d.id}')" class="px-2.5 py-1 rounded text-xs border ${cls}">${d.label}</button>`;
+      }).join('');
+    }
+
+    function toggleCronDay(dayId) {
+      if (selectedCronDays.includes(dayId)) {
+        if (selectedCronDays.length > 1) {
+          selectedCronDays = selectedCronDays.filter(d => d !== dayId);
+        }
+      } else {
+        selectedCronDays.push(dayId);
+      }
+      renderDayPills();
+      recalculateHumanCron();
+    }
+
+    function formatTime12(timeStr) {
+      if (!timeStr) return '09:00 AM';
+      const [h, m] = timeStr.split(':').map(Number);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const hr = h % 12 || 12;
+      return `${hr}:${String(m).padStart(2, '0')} ${ampm}`;
+    }
+
+    function recalculateHumanCron() {
+      const freq = document.getElementById('cron-freq')?.value || 'daily';
+      let cron = '0 9 * * *';
+      let human = 'Every day at 09:00 AM';
+
+      if (freq === 'daily') {
+        const t = document.getElementById('cron-time')?.value || '09:00';
+        const [h, m] = t.split(':').map(Number);
+        cron = `${m} ${h} * * *`;
+        human = `Every day at ${formatTime12(t)}`;
+      } else if (freq === 'weekdays') {
+        const t = document.getElementById('cron-time')?.value || '09:00';
+        const [h, m] = t.split(':').map(Number);
+        cron = `${m} ${h} * * 1-5`;
+        human = `Every weekday (Mon - Fri) at ${formatTime12(t)}`;
+      } else if (freq === 'weekends') {
+        const t = document.getElementById('cron-time')?.value || '09:00';
+        const [h, m] = t.split(':').map(Number);
+        cron = `${m} ${h} * * 6,0`;
+        human = `Every weekend (Sat & Sun) at ${formatTime12(t)}`;
+      } else if (freq === 'specific_days') {
+        const t = document.getElementById('cron-time')?.value || '09:00';
+        const [h, m] = t.split(':').map(Number);
+        const dayMap = { '1': 'Mon', '2': 'Tue', '3': 'Wed', '4': 'Thu', '5': 'Fri', '6': 'Sat', '0': 'Sun' };
+        const sortedDays = [...selectedCronDays].sort((a,b) => (a==='0'?7:Number(a)) - (b==='0'?7:Number(b)));
+        const dayLabels = sortedDays.map(d => dayMap[d]).join(', ');
+        cron = `${m} ${h} * * ${sortedDays.join(',')}`;
+        human = `Every ${dayLabels || 'selected day'} at ${formatTime12(t)}`;
+      } else if (freq === 'twice_daily') {
+        const t1 = document.getElementById('cron-time-1')?.value || '08:00';
+        const t2 = document.getElementById('cron-time-2')?.value || '18:00';
+        const [h1, m1] = t1.split(':').map(Number);
+        const [h2, m2] = t2.split(':').map(Number);
+        cron = `${m1} ${h1},${h2} * * *`;
+        human = `Twice daily at ${formatTime12(t1)} and ${formatTime12(t2)}`;
+      } else if (freq === 'monthly') {
+        const day = document.getElementById('cron-month-day')?.value || '1';
+        const t = document.getElementById('cron-time')?.value || '10:00';
+        const [h, m] = t.split(':').map(Number);
+        cron = `${m} ${h} ${day} * *`;
+        const suff = (day==1||day==21||day==31)?'st':((day==2||day==22)?'nd':((day==3||day==23)?'rd':'th'));
+        human = `On the ${day}${suff} of every month at ${formatTime12(t)}`;
+      } else if (freq === 'hourly') {
+        const m = parseInt(document.getElementById('cron-minute')?.value || 0);
+        cron = `${m} * * * *`;
+        human = `Every hour at :${String(m).padStart(2, '0')} past the hour`;
+      } else if (freq === 'custom') {
+        cron = document.getElementById('cron-custom-input')?.value.trim() || '0 9 * * *';
+        human = `Custom Cron Schedule: ${cron}`;
+      }
+
+      const rawInput = document.getElementById('sched-cron');
+      if (rawInput) rawInput.value = cron;
+      const hEl = document.getElementById('cron-human-text');
+      if (hEl) hEl.innerText = '⏰ ' + human;
+      const bEl = document.getElementById('cron-raw-badge');
+      if (bEl) bEl.innerText = cron;
+    }
+
+    function applyCronPreset(presetKey) {
+      const fSelect = document.getElementById('cron-freq');
+      if (!fSelect) return;
+      if (presetKey === 'daily_morning') {
+        fSelect.value = 'daily';
+        renderCronSubControls();
+        const t = document.getElementById('cron-time');
+        if (t) t.value = '08:00';
+      } else if (presetKey === 'weekdays_morning') {
+        fSelect.value = 'weekdays';
+        renderCronSubControls();
+        const t = document.getElementById('cron-time');
+        if (t) t.value = '09:00';
+      } else if (presetKey === 'daily_evening') {
+        fSelect.value = 'daily';
+        renderCronSubControls();
+        const t = document.getElementById('cron-time');
+        if (t) t.value = '18:00';
+      } else if (presetKey === 'twice_daily') {
+        fSelect.value = 'twice_daily';
+        renderCronSubControls();
+      }
+      recalculateHumanCron();
     }
     updateSchedInputs();
 

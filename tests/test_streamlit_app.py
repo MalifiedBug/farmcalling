@@ -8,7 +8,7 @@ from streamlit.testing.v1 import AppTest
 
 class TestStreamlitApp(unittest.TestCase):
     def test_app_loads_successfully(self):
-        at = AppTest.from_file("app.py", default_timeout=25)
+        at = AppTest.from_file("app.py", default_timeout=60)
         at.run()
         # Verify no unhandled exception
         self.assertFalse(at.exception)

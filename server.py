@@ -80,9 +80,10 @@ def health_check():
 
 # --- Audio Serving ---
 @app.api_route("/audio/{asset_id}", methods=["GET", "HEAD"])
-def serve_audio(asset_id: str):
+def serve_audio(asset_id: str, request: Request):
     """
     High-reliability audio streaming endpoint for Vobiz (<Play> URL).
+    Supports HTTP Range requests (206 Partial Content) required by telephony media gateways.
     Tiers:
     1. Database BLOB bytes (in-memory, works across any serverless instance)
     2. Filepath on disk (temporary or bundled)
@@ -99,13 +100,50 @@ def serve_audio(asset_id: str):
             base_id = base_id[:-len(sfx)]
             break
 
+    def make_byte_response(data: bytes, m_type: str, f_name: str) -> Response:
+        """Helper to create standard or 206 Partial Content responses based on Range header."""
+        total_len = len(data)
+        range_header = request.headers.get("range")
+        if range_header and range_header.startswith("bytes="):
+            try:
+                ranges = range_header[6:].split("-")
+                start = int(ranges[0]) if ranges[0] else 0
+                end = int(ranges[1]) if len(ranges) > 1 and ranges[1] else total_len - 1
+                end = min(end, total_len - 1)
+                if start <= end < total_len:
+                    sliced = data[start:end+1]
+                    return Response(
+                        content=sliced,
+                        status_code=206,
+                        media_type=m_type,
+                        headers={
+                            "Accept-Ranges": "bytes",
+                            "Content-Range": f"bytes {start}-{end}/{total_len}",
+                            "Content-Length": str(len(sliced)),
+                            "Content-Disposition": f'inline; filename="{f_name}"',
+                            "Cache-Control": "public, max-age=120"
+                        }
+                    )
+            except Exception as ex:
+                logger.warning(f"Failed parsing Range '{range_header}': {ex}")
+
+        return Response(
+            content=data,
+            media_type=m_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(total_len),
+                "Content-Disposition": f'inline; filename="{f_name}"',
+                "Cache-Control": "public, max-age=120"
+            }
+        )
+
     # Tier 1: Look up in database by base_id or clean_id
     asset = get_audio_asset(base_id) or get_audio_asset(clean_id)
     if asset:
         # 1a. If raw audio_bytes BLOB exists in DB, serve directly from memory
         raw_bytes = asset.get("audio_bytes")
         if raw_bytes and len(raw_bytes) > 0:
-            # Dynamic format detection and normalization
             if raw_bytes.startswith(b"RIFF"):
                 mime_type = "audio/wav"
                 filename = f"{base_id}.wav"
@@ -121,16 +159,7 @@ def serve_audio(asset_id: str):
                 mime_type = asset.get("mime_type", "audio/wav")
                 filename = asset.get("filename", f"{base_id}.wav")
 
-            return Response(
-                content=raw_bytes,
-                media_type=mime_type,
-                headers={
-                    "Accept-Ranges": "bytes",
-                    "Content-Length": str(len(raw_bytes)),
-                    "Content-Disposition": f'inline; filename="{filename}"',
-                    "Cache-Control": "public, max-age=60"
-                }
-            )
+            return make_byte_response(raw_bytes, mime_type, filename)
 
         # 1b. If filepath on disk exists
         fp = asset.get("filepath", "")
@@ -141,36 +170,13 @@ def serve_audio(asset_id: str):
                 if disk_bytes.startswith(b"RIFF"):
                     from audio_manager import normalize_wav_bytes
                     disk_bytes = normalize_wav_bytes(disk_bytes)
-                    return Response(
-                        content=disk_bytes,
-                        media_type="audio/wav",
-                        headers={
-                            "Accept-Ranges": "bytes",
-                            "Content-Length": str(len(disk_bytes)),
-                            "Content-Disposition": f'inline; filename="{base_id}.wav"',
-                            "Cache-Control": "public, max-age=60"
-                        }
-                    )
+                    return make_byte_response(disk_bytes, "audio/wav", f"{base_id}.wav")
                 elif disk_bytes.startswith(b"ID3") or (len(disk_bytes) > 2 and disk_bytes[0] == 0xFF and (disk_bytes[1] & 0xE0) == 0xE0):
-                    return Response(
-                        content=disk_bytes,
-                        media_type="audio/mpeg",
-                        headers={
-                            "Accept-Ranges": "bytes",
-                            "Content-Length": str(len(disk_bytes)),
-                            "Content-Disposition": f'inline; filename="{base_id}.mp3"',
-                            "Cache-Control": "public, max-age=60"
-                        }
-                    )
+                    return make_byte_response(disk_bytes, "audio/mpeg", f"{base_id}.mp3")
+                else:
+                    return make_byte_response(disk_bytes, asset.get("mime_type", "audio/wav"), asset.get("filename", f"{base_id}.wav"))
             except Exception as e:
                 logger.warning(f"Error reading audio file from {fp}: {e}")
-
-            return FileResponse(
-                path=fp,
-                media_type=asset.get("mime_type", "audio/wav"),
-                filename=asset.get("filename", f"{base_id}.wav"),
-                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=60"}
-            )
 
         # 1c. Try resolving filename in static/audio, data/audio, or /tmp/audio
         fname = asset.get("filename", "")
@@ -182,11 +188,10 @@ def serve_audio(asset_id: str):
             ]:
                 candidate = os.path.join(c_dir, fname)
                 if os.path.exists(candidate):
-                    return FileResponse(
-                        path=candidate,
-                        media_type=asset.get("mime_type", "audio/wav"),
-                        headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=60"}
-                    )
+                    with open(candidate, "rb") as f:
+                        b = f.read()
+                    m = "audio/wav" if candidate.endswith(".wav") else "audio/mpeg"
+                    return make_byte_response(b, m, fname)
 
     # Tier 2: Check if asset_id is a direct filename (e.g. "test1.wav", "test1", "farm_alert.wav")
     candidates = [clean_id]
@@ -201,23 +206,19 @@ def serve_audio(asset_id: str):
         ]:
             candidate = os.path.join(c_dir, c_name)
             if os.path.exists(candidate):
+                with open(candidate, "rb") as f:
+                    b = f.read()
                 mtype = "audio/wav" if candidate.endswith(".wav") else "audio/mpeg"
-                return FileResponse(
-                    path=candidate,
-                    media_type=mtype,
-                    headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=60"}
-                )
+                return make_byte_response(b, mtype, c_name)
 
     # Tier 3: Infallible fallback - never return 404 to Vobiz during a live call!
     for fb_name in ["test1.wav", "farm_alert.wav"]:
         fb_path = os.path.join(STATIC_DIR, "audio", fb_name)
         if os.path.exists(fb_path):
             logger.warning(f"Audio asset '{asset_id}' not found; streaming fallback audio: {fb_name}")
-            return FileResponse(
-                path=fb_path,
-                media_type="audio/wav",
-                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=60"}
-            )
+            with open(fb_path, "rb") as f:
+                b = f.read()
+            return make_byte_response(b, "audio/wav", fb_name)
 
     raise HTTPException(status_code=404, detail=f"Audio asset '{asset_id}' not found")
 
