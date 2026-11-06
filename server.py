@@ -91,14 +91,36 @@ def serve_audio(asset_id: str):
     """
     logger.info(f"Serving audio request for asset_id: {asset_id}")
 
-    # Tier 1: Look up in database
-    asset = get_audio_asset(asset_id)
+    # Strip extensions to obtain canonical asset ID
+    clean_id = asset_id.strip()
+    base_id = clean_id
+    for sfx in [".wav", ".mp3", ".ogg", ".webm"]:
+        if base_id.lower().endswith(sfx):
+            base_id = base_id[:-len(sfx)]
+            break
+
+    # Tier 1: Look up in database by base_id or clean_id
+    asset = get_audio_asset(base_id) or get_audio_asset(clean_id)
     if asset:
         # 1a. If raw audio_bytes BLOB exists in DB, serve directly from memory
         raw_bytes = asset.get("audio_bytes")
         if raw_bytes and len(raw_bytes) > 0:
-            mime_type = asset.get("mime_type", "audio/wav")
-            filename = asset.get("filename", f"{asset_id}.wav")
+            # Dynamic format detection and normalization
+            if raw_bytes.startswith(b"RIFF"):
+                mime_type = "audio/wav"
+                filename = f"{base_id}.wav"
+                try:
+                    from audio_manager import normalize_wav_bytes
+                    raw_bytes = normalize_wav_bytes(raw_bytes)
+                except Exception as e:
+                    logger.warning(f"Failed to normalize WAV bytes: {e}")
+            elif raw_bytes.startswith(b"ID3") or (len(raw_bytes) > 2 and raw_bytes[0] == 0xFF and (raw_bytes[1] & 0xE0) == 0xE0):
+                mime_type = "audio/mpeg"
+                filename = f"{base_id}.mp3"
+            else:
+                mime_type = asset.get("mime_type", "audio/wav")
+                filename = asset.get("filename", f"{base_id}.wav")
+
             return Response(
                 content=raw_bytes,
                 media_type=mime_type,
@@ -106,18 +128,48 @@ def serve_audio(asset_id: str):
                     "Accept-Ranges": "bytes",
                     "Content-Length": str(len(raw_bytes)),
                     "Content-Disposition": f'inline; filename="{filename}"',
-                    "Cache-Control": "public, max-age=3600"
+                    "Cache-Control": "public, max-age=60"
                 }
             )
 
         # 1b. If filepath on disk exists
         fp = asset.get("filepath", "")
         if fp and os.path.exists(fp):
+            try:
+                with open(fp, "rb") as f:
+                    disk_bytes = f.read()
+                if disk_bytes.startswith(b"RIFF"):
+                    from audio_manager import normalize_wav_bytes
+                    disk_bytes = normalize_wav_bytes(disk_bytes)
+                    return Response(
+                        content=disk_bytes,
+                        media_type="audio/wav",
+                        headers={
+                            "Accept-Ranges": "bytes",
+                            "Content-Length": str(len(disk_bytes)),
+                            "Content-Disposition": f'inline; filename="{base_id}.wav"',
+                            "Cache-Control": "public, max-age=60"
+                        }
+                    )
+                elif disk_bytes.startswith(b"ID3") or (len(disk_bytes) > 2 and disk_bytes[0] == 0xFF and (disk_bytes[1] & 0xE0) == 0xE0):
+                    return Response(
+                        content=disk_bytes,
+                        media_type="audio/mpeg",
+                        headers={
+                            "Accept-Ranges": "bytes",
+                            "Content-Length": str(len(disk_bytes)),
+                            "Content-Disposition": f'inline; filename="{base_id}.mp3"',
+                            "Cache-Control": "public, max-age=60"
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"Error reading audio file from {fp}: {e}")
+
             return FileResponse(
                 path=fp,
                 media_type=asset.get("mime_type", "audio/wav"),
-                filename=asset.get("filename", f"{asset_id}.wav"),
-                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+                filename=asset.get("filename", f"{base_id}.wav"),
+                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=60"}
             )
 
         # 1c. Try resolving filename in static/audio, data/audio, or /tmp/audio
@@ -133,11 +185,10 @@ def serve_audio(asset_id: str):
                     return FileResponse(
                         path=candidate,
                         media_type=asset.get("mime_type", "audio/wav"),
-                        headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+                        headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=60"}
                     )
 
     # Tier 2: Check if asset_id is a direct filename (e.g. "test1.wav", "test1", "farm_alert.wav")
-    clean_id = asset_id.strip()
     candidates = [clean_id]
     if not clean_id.endswith(".wav") and not clean_id.endswith(".mp3"):
         candidates.extend([f"{clean_id}.wav", f"{clean_id}.mp3"])
@@ -154,7 +205,7 @@ def serve_audio(asset_id: str):
                 return FileResponse(
                     path=candidate,
                     media_type=mtype,
-                    headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+                    headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=60"}
                 )
 
     # Tier 3: Infallible fallback - never return 404 to Vobiz during a live call!
@@ -165,7 +216,7 @@ def serve_audio(asset_id: str):
             return FileResponse(
                 path=fb_path,
                 media_type="audio/wav",
-                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"}
+                headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=60"}
             )
 
     raise HTTPException(status_code=404, detail=f"Audio asset '{asset_id}' not found")
@@ -176,8 +227,8 @@ async def answer_webhook(
     request: Request,
     schedule_id: Optional[str] = Query(None),
     audio_id: Optional[str] = Query(None),
-    play_mode: Optional[str] = Query("audio"),
-    loop: Optional[int] = Query(1)
+    play_mode: Optional[str] = Query(None),
+    loop: Optional[int] = Query(None)
 ):
     form_data = {}
     if request.method == "POST":
@@ -207,7 +258,8 @@ async def answer_webhook(
     schedule = get_schedule(schedule_id) if schedule_id else None
     target_audio_id = audio_id or (schedule.get("audio_id") if schedule else None) or settings.get("default_audio_id") or "test1-sample-id"
     target_play_mode = play_mode or (schedule.get("play_mode") if schedule else "audio")
-    target_loop = loop if loop is not None else (schedule.get("loop_count", 1) if schedule else 1)
+    raw_loop = loop if loop is not None else (schedule.get("loop_count", 1) if schedule else 1)
+    target_loop = max(1, min(int(raw_loop or 1), 10))
 
     xml_content = ""
 
@@ -217,19 +269,39 @@ async def answer_webhook(
         lang = settings.get("tts_default_language", "en-US")
         xml_content = VobizClient.generate_speak_xml(tts_text, voice=voice, language=lang, loop=target_loop)
     elif target_audio_id:
-        # Check if direct URL (e.g. http:// or https://)
-        if str(target_audio_id).startswith("http://") or str(target_audio_id).startswith("https://"):
-            xml_content = VobizClient.generate_play_xml(str(target_audio_id), loop=target_loop)
+        clean_aid = str(target_audio_id).strip()
+        if clean_aid.startswith("http://") or clean_aid.startswith("https://"):
+            xml_content = VobizClient.generate_play_xml(clean_aid, loop=target_loop)
         else:
-            asset = get_audio_asset(target_audio_id)
+            base_aid = clean_aid
+            for sfx in [".wav", ".mp3"]:
+                if base_aid.lower().endswith(sfx):
+                    base_aid = base_aid[:-len(sfx)]
+                    break
+
+            asset = get_audio_asset(base_aid) or get_audio_asset(clean_aid)
             if asset and asset.get("source_type") == "tts" and asset.get("tts_text"):
                 voice = asset.get("tts_voice") or settings.get("tts_default_voice", "WOMAN")
                 xml_content = VobizClient.generate_speak_xml(asset["tts_text"], voice=voice, loop=target_loop)
             else:
-                audio_public_url = f"{base_url}/audio/{target_audio_id}"
+                ext = ".wav"
+                if asset:
+                    m = asset.get("mime_type", "")
+                    if "mpeg" in m or "mp3" in m:
+                        ext = ".mp3"
+                    raw = asset.get("audio_bytes")
+                    if raw:
+                        if raw.startswith(b"RIFF"):
+                            ext = ".wav"
+                        elif raw.startswith(b"ID3") or (len(raw) > 2 and raw[0] == 0xFF and (raw[1] & 0xE0) == 0xE0):
+                            ext = ".mp3"
+                if clean_aid.endswith(".wav") or clean_aid.endswith(".mp3"):
+                    audio_public_url = f"{base_url}/audio/{clean_aid}"
+                else:
+                    audio_public_url = f"{base_url}/audio/{clean_aid}{ext}"
                 xml_content = VobizClient.generate_play_xml(audio_public_url, loop=target_loop)
     else:
-        audio_public_url = f"{base_url}/audio/test1-sample-id"
+        audio_public_url = f"{base_url}/audio/test1.wav"
         xml_content = VobizClient.generate_play_xml(audio_public_url, loop=target_loop)
 
     if call_uuid:
@@ -366,6 +438,7 @@ class InstantCallPayload(BaseModel):
     audio_id: Optional[str] = None
     play_mode: Optional[str] = "audio"
     tts_message: Optional[str] = None
+    loop_count: Optional[int] = 1
     base_url: Optional[str] = None
 
 @app.post("/api/calls/instant")
@@ -378,12 +451,13 @@ def api_trigger_instant_call(request: Request, payload: InstantCallPayload):
     detected_base = payload.base_url or (f"{proto}://{host}" if host else None)
 
     p_mode = "tts" if payload.tts_message else (payload.play_mode or "audio")
+    loops = max(1, min(int(payload.loop_count or 1), 10))
     success, msg, data = trigger_call_now(
         to_number=payload.to_number,
         audio_id=payload.audio_id,
         play_mode=p_mode,
         tts_message=payload.tts_message,
-        loop_count=1,
+        loop_count=loops,
         schedule_name="Instant Dial",
         base_url_override=detected_base
     )
@@ -402,9 +476,13 @@ class CreateSchedulePayload(BaseModel):
     interval_unit: Optional[str] = None
     cron_expression: Optional[str] = None
     audio_id: Optional[str] = None
+    play_mode: Optional[str] = "audio"
+    tts_message: Optional[str] = None
+    loop_count: Optional[int] = 1
 
 @app.post("/api/schedules")
 def api_create_schedule(payload: CreateSchedulePayload):
+    loops = max(1, min(int(payload.loop_count or 1), 10))
     sched_id = create_schedule(
         name=payload.name,
         to_number=payload.to_number,
@@ -414,8 +492,12 @@ def api_create_schedule(payload: CreateSchedulePayload):
         interval_unit=payload.interval_unit,
         cron_expression=payload.cron_expression,
         audio_id=payload.audio_id,
+        play_mode=payload.play_mode or "audio",
+        tts_message=payload.tts_message,
+        loop_count=loops,
         next_run_at=payload.scheduled_datetime
     )
+    return {"success": True, "schedule_id": sched_id}
     return {"success": True, "schedule_id": sched_id}
 
 @app.delete("/api/schedules/{schedule_id}")

@@ -80,9 +80,9 @@ with left_col:
                 height=80
             )
 
-        loops = st.number_input("Audio Repeat Count (Loop)", min_value=1, max_value=5, value=1)
+        loops = st.number_input("Audio Repeat Count (Loop)", min_value=1, max_value=10, value=1, help="Number of times to play audio before cutting call (1 - 10)")
 
-        submitted = st.form_submit_button("🚀 Dial Number Now", use_container_width=True, type="primary")
+        submitted = st.form_submit_button("🚀 Dial Number Now", width="stretch", type="primary")
 
     if submitted:
         if not to_phone.strip():
@@ -154,5 +154,5 @@ else:
         })
 
     df_logs = pd.DataFrame(table_data)
-    st.dataframe(df_logs, use_container_width=True, hide_index=True)
+    st.dataframe(df_logs, width="stretch", hide_index=True)
 

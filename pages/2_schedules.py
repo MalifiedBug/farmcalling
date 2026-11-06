@@ -111,11 +111,11 @@ with st.expander("➕ Create New Call Schedule", expanded=True):
 
         col_loop, col_note = st.columns([1, 2])
         with col_loop:
-            loops = st.number_input("Loop Count", min_value=1, max_value=5, value=1, help="Number of times to play audio before cutting the call.")
+            loops = st.number_input("Repeat Count (Loops)", min_value=1, max_value=10, value=1, help="Number of times to play audio before cutting the call (1 - 10).")
         with col_note:
-            st.caption("ℹ️ Vobiz will play the chosen audio in full, then immediately hang up the call as per VobizXML `<Hangup/>` specifications.")
+            st.caption("ℹ️ Vobiz will play the chosen audio consecutively for the set repeat count, then hang up as per VobizXML `<Hangup/>` specifications.")
 
-        submitted = st.form_submit_button("✨ Save & Activate Schedule", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("✨ Save & Activate Schedule", type="primary", width="stretch")
 
     if submitted:
         if not schedule_name.strip() or not to_number.strip():

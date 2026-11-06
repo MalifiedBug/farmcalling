@@ -103,6 +103,13 @@
             <label class="block text-xs font-medium text-gray-300 mb-1">Or Custom Voice Message (TTS)</label>
             <textarea id="instant-tts" rows="2" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="Hello from FarmCalling. Have a productive day!"></textarea>
           </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Repeat Message (Times)</label>
+            <div class="flex items-center space-x-3">
+              <input type="number" id="instant-loop" min="1" max="10" value="1" class="w-24 bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm text-center font-bold text-blue-400 focus:outline-none focus:border-blue-500">
+              <span class="text-xs text-gray-400">Number of times message is heard on call (1 - 10)</span>
+            </div>
+          </div>
           <button onclick="triggerInstantCall()" class="w-full btn-primary py-2.5 rounded-lg text-sm font-medium flex items-center justify-center">
             <i data-feather="phone-call" class="w-4 h-4 mr-2"></i> Dial Number Now
           </button>
@@ -151,9 +158,15 @@
           </div>
         </div>
 
-        <div>
-          <label class="block text-xs font-medium text-gray-300 mb-1">Audio Prompt</label>
-          <select id="sched-audio-select" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm"></select>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Audio Prompt</label>
+            <select id="sched-audio-select" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm"></select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-300 mb-1">Repeat Message (Times)</label>
+            <input type="number" id="sched-loop" min="1" max="10" value="1" class="w-full bg-[#1e293b] border border-gray-700 rounded-lg px-3 py-2 text-sm text-center font-bold text-blue-400">
+          </div>
         </div>
 
         <button onclick="saveSchedule()" class="btn-primary px-6 py-2 rounded-lg text-sm font-medium">Save & Activate Schedule</button>
@@ -355,6 +368,7 @@
       const phone = document.getElementById('instant-phone').value.trim();
       const audioId = document.getElementById('instant-audio-select').value;
       const tts = document.getElementById('instant-tts').value.trim();
+      const loop = parseInt(document.getElementById('instant-loop').value) || 1;
       const resBox = document.getElementById('instant-result');
 
       if (!phone) {
@@ -363,7 +377,7 @@
       }
 
       resBox.className = 'text-xs p-3 rounded-lg bg-blue-950 text-blue-300 border border-blue-800';
-      resBox.innerText = 'Dialing via Vobiz...';
+      resBox.innerText = `Dialing via Vobiz (Repeating ${loop}x)...`;
       resBox.classList.remove('hidden');
 
       try {
@@ -374,6 +388,7 @@
             to_number: phone,
             audio_id: audioId,
             tts_message: tts,
+            loop_count: loop,
             base_url: window.location.origin
           })
         });
@@ -432,10 +447,11 @@
       const to = document.getElementById('sched-to').value.trim();
       const type = document.getElementById('sched-type').value;
       const audioId = document.getElementById('sched-audio-select').value;
+      const loop = parseInt(document.getElementById('sched-loop').value) || 1;
 
       if (!name || !to) return alert('Please enter campaign name and recipient number.');
 
-      let body = { name, to_number: to, schedule_type: type, audio_id: audioId };
+      let body = { name, to_number: to, schedule_type: type, audio_id: audioId, loop_count: loop };
       if (type === 'once') {
         body.scheduled_datetime = document.getElementById('sched-datetime').value;
       } else if (type === 'interval') {
@@ -472,6 +488,7 @@
               <th>Destination</th>
               <th>Type</th>
               <th>Timing</th>
+              <th>Repeats</th>
               <th>Status</th>
               <th>Runs</th>
               <th>Actions</th>
@@ -484,6 +501,7 @@
                 <td><code>${s.to_number}</code></td>
                 <td><span class="uppercase font-mono">${s.schedule_type}</span></td>
                 <td>${s.schedule_type === 'once' ? (s.scheduled_datetime || '').replace('T', ' ') : (s.schedule_type === 'interval' ? `Every ${s.interval_value} ${s.interval_unit}` : s.cron_expression)}</td>
+                <td><span class="font-bold text-blue-400">${s.loop_count || 1}x</span></td>
                 <td><span class="px-2 py-0.5 rounded text-[10px] ${s.status === 'active' ? 'bg-emerald-950 text-emerald-400' : 'bg-gray-800 text-gray-400'}">${s.status}</span></td>
                 <td>${s.total_runs}</td>
                 <td>
@@ -510,38 +528,118 @@
       loadSchedules();
     }
 
-    // Audio recording logic
+    // Audio recording logic - High fidelity 16kHz mono 16-bit PCM WAV encoder
+    function encodeWAV(samples, sampleRate) {
+      const buffer = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(buffer);
+      function writeString(offset, string) {
+        for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i));
+      }
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM format
+      view.setUint16(22, 1, true); // mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true); // 16-bit
+      writeString(36, 'data');
+      view.setUint32(40, samples.length * 2, true);
+      let offset = 44;
+      for (let i = 0; i < samples.length; i++, offset += 2) {
+        const s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      }
+      return new Blob([view], { type: 'audio/wav' });
+    }
+
+    let audioCtx = null;
+    let micStream = null;
+    let scriptNode = null;
+    let pcmBuffers = [];
+    let isRecordingAudio = false;
+
     async function toggleRecording() {
-      if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
+      if (isRecordingAudio) {
+        isRecordingAudio = false;
         clearInterval(recTimerInterval);
+        if (scriptNode) {
+          scriptNode.disconnect();
+          scriptNode = null;
+        }
+        if (micStream) {
+          micStream.getTracks().forEach(t => t.stop());
+          micStream = null;
+        }
+
+        let totalLen = 0;
+        for (const b of pcmBuffers) totalLen += b.length;
+        const merged = new Float32Array(totalLen);
+        let offset = 0;
+        for (const b of pcmBuffers) {
+          merged.set(b, offset);
+          offset += b.length;
+        }
+
+        const inRate = audioCtx ? audioCtx.sampleRate : 48000;
+        const targetRate = 16000;
+        let finalSamples = merged;
+        if (inRate !== targetRate && totalLen > 0) {
+          const outLen = Math.round(totalLen * targetRate / inRate);
+          const resampled = new Float32Array(outLen);
+          const ratio = totalLen / outLen;
+          for (let i = 0; i < outLen; i++) {
+            const idx = i * ratio;
+            const i0 = Math.floor(idx);
+            const i1 = Math.min(i0 + 1, totalLen - 1);
+            const frac = idx - i0;
+            resampled[i] = merged[i0] * (1 - frac) + merged[i1] * frac;
+          }
+          finalSamples = resampled;
+        }
+
+        recordedBlob = encodeWAV(finalSamples, targetRate);
+        const audioUrl = URL.createObjectURL(recordedBlob);
+        const p = document.getElementById('rec-preview');
+        p.src = audioUrl;
+        p.classList.remove('hidden');
+        document.getElementById('btn-save-rec').classList.remove('hidden');
+
         document.getElementById('rec-text').innerText = 'Start Recording';
         document.getElementById('btn-record').classList.remove('bg-gray-700');
         document.getElementById('btn-record').classList.add('bg-rose-600');
       } else {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-        mediaRecorder.onstop = () => {
-          recordedBlob = new Blob(audioChunks, { type: 'audio/wav' });
-          const audioUrl = URL.createObjectURL(recordedBlob);
-          const p = document.getElementById('rec-preview');
-          p.src = audioUrl;
-          p.classList.remove('hidden');
-          document.getElementById('btn-save-rec').classList.remove('hidden');
-        };
-        mediaRecorder.start();
-        recSeconds = 0;
-        recTimerInterval = setInterval(() => {
-          recSeconds++;
-          const m = String(Math.floor(recSeconds / 60)).padStart(2, '0');
-          const s = String(recSeconds % 60).padStart(2, '0');
-          document.getElementById('rec-timer').innerText = `${m}:${s}`;
-        }, 1000);
-        document.getElementById('rec-text').innerText = 'Stop Recording';
-        document.getElementById('btn-record').classList.add('bg-gray-700');
-        document.getElementById('btn-record').classList.remove('bg-rose-600');
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const source = audioCtx.createMediaStreamSource(micStream);
+          scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+          pcmBuffers = [];
+          isRecordingAudio = true;
+          scriptNode.onaudioprocess = (e) => {
+            if (!isRecordingAudio) return;
+            const inputData = e.inputBuffer.getChannelData(0);
+            pcmBuffers.push(new Float32Array(inputData));
+          };
+          source.connect(scriptNode);
+          scriptNode.connect(audioCtx.destination);
+
+          recSeconds = 0;
+          recTimerInterval = setInterval(() => {
+            recSeconds++;
+            const m = String(Math.floor(recSeconds / 60)).padStart(2, '0');
+            const s = String(recSeconds % 60).padStart(2, '0');
+            document.getElementById('rec-timer').innerText = `${m}:${s}`;
+          }, 1000);
+          document.getElementById('rec-text').innerText = 'Stop Recording';
+          document.getElementById('btn-record').classList.add('bg-gray-700');
+          document.getElementById('btn-record').classList.remove('bg-rose-600');
+        } catch (err) {
+          alert('Microphone access denied or error: ' + err.message);
+        }
       }
     }
 

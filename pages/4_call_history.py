@@ -33,7 +33,7 @@ else:
             data=csv_buffer.getvalue(),
             file_name="farmcalling_call_logs.csv",
             mime="text/csv",
-            use_container_width=True
+            width="stretch"
         )
 
     # Filter data
@@ -79,7 +79,7 @@ else:
             "Initiated At": l["initiated_at"].replace("T", " ")[:19]
         })
 
-    st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True)
 
     # Detailed Accordion / Inspection
     st.markdown("### 🔎 Call Record Inspector")

@@ -62,7 +62,14 @@ class TestFarmCalling(unittest.TestCase):
         res = self.client.get(f"/audio/{asset_id}")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.headers.get("content-type"), "audio/wav")
-        self.assertEqual(res.content, sample_wav_bytes)
+        self.assertTrue(res.content.startswith(b"RIFF"))
+        self.assertIn(b"WAVEfmt ", res.content)
+
+        # 2a. Test audio serving with .wav extension
+        res_ext = self.client.get(f"/audio/{asset_id}.wav")
+        self.assertEqual(res_ext.status_code, 200)
+        self.assertEqual(res_ext.headers.get("content-type"), "audio/wav")
+        self.assertEqual(res_ext.content, res.content)
 
         # 2b. Test bundled static audio and HEAD request
         head_res = self.client.head(f"/audio/{asset_id}")
@@ -76,6 +83,24 @@ class TestFarmCalling(unittest.TestCase):
         fallback_res = self.client.get("/audio/unknown_missing_audio_id")
         self.assertEqual(fallback_res.status_code, 200)
         self.assertEqual(fallback_res.headers.get("content-type"), "audio/wav")
+
+        # 2d. Test 48kHz WAV normalization to 16kHz
+        import wave, io
+        wav_48k_io = io.BytesIO()
+        with wave.open(wav_48k_io, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(48000)
+            wf.writeframes(b"\x00\x00" * 480) # 480 frames at 48kHz = 10ms
+        wav_48k_bytes = wav_48k_io.getvalue()
+        aid_48k = save_uploaded_audio("high_res_motor.wav", wav_48k_bytes, "Motor Start 48k")
+        res_48k = self.client.get(f"/audio/{aid_48k}.wav")
+        self.assertEqual(res_48k.status_code, 200)
+        self.assertEqual(res_48k.headers.get("content-type"), "audio/wav")
+        with wave.open(io.BytesIO(res_48k.content), "rb") as check_wf:
+            self.assertEqual(check_wf.getframerate(), 16000)
+            self.assertEqual(check_wf.getnchannels(), 1)
+            self.assertEqual(check_wf.getsampwidth(), 2)
 
         # 3. Test TTS asset
         tts_id = create_tts_asset("Test TTS", "Hello farmer", voice="WOMAN")
@@ -112,9 +137,9 @@ class TestFarmCalling(unittest.TestCase):
         )
 
         call_uuid = "vobiz-test-uuid-999"
-        # 1. Simulate Answer Webhook
+        # 1. Simulate Answer Webhook with loop count = 3
         ans_resp = self.client.post(
-            f"/webhook/answer?schedule_id={sched_id}&audio_id={aid}",
+            f"/webhook/answer?schedule_id={sched_id}&audio_id={aid}&loop=3",
             data={
                 "CallUUID": call_uuid,
                 "From": "+14155551234",
@@ -125,6 +150,7 @@ class TestFarmCalling(unittest.TestCase):
         self.assertEqual(ans_resp.status_code, 200)
         self.assertIn("application/xml", ans_resp.headers.get("content-type", ""))
         self.assertIn(f"/audio/{aid}", ans_resp.text)
+        self.assertIn('loop="3"', ans_resp.text)
         self.assertIn("<Hangup/>", ans_resp.text)
 
         # 2. Simulate Hangup Webhook
@@ -214,9 +240,79 @@ class TestFarmCalling(unittest.TestCase):
 
         finally:
             # Clean up test env vars
-            del os.environ["VOBIZ_AUTH_ID"]
-            del os.environ["VOBIZ_AUTH_TOKEN"]
-            del os.environ["VOBIZ_CALLER_ID"]
+            if "VOBIZ_AUTH_ID" in os.environ:
+                del os.environ["VOBIZ_AUTH_ID"]
+            if "VOBIZ_AUTH_TOKEN" in os.environ:
+                del os.environ["VOBIZ_AUTH_TOKEN"]
+            if "VOBIZ_CALLER_ID" in os.environ:
+                del os.environ["VOBIZ_CALLER_ID"]
+
+    def test_08_repeat_count_and_dynamic_audio_normalization(self):
+        import wave, io
+
+        # 1. Test uploading a 48kHz WAV audio with NO extension in filename
+        raw_48k_io = io.BytesIO()
+        with wave.open(raw_48k_io, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(48000)
+            wf.writeframes(b"\x10\x00" * 480) # 480 samples
+        raw_48k_bytes = raw_48k_io.getvalue()
+
+        # Upload without extension, e.g. "motorstart1"
+        aid = save_uploaded_audio("motorstart1", raw_48k_bytes, "Motor Start Pump 1")
+        asset = get_audio_asset(aid)
+
+        # Magic bytes detection must correctly identify as WAV and normalize to 16kHz
+        self.assertEqual(asset["mime_type"], "audio/wav")
+        self.assertTrue(asset["filename"].endswith(".wav"))
+
+        # Verify serving both with and without .wav extension
+        res_plain = self.client.get(f"/audio/{aid}")
+        self.assertEqual(res_plain.status_code, 200)
+        self.assertEqual(res_plain.headers.get("content-type"), "audio/wav")
+
+        res_ext = self.client.get(f"/audio/{aid}.wav")
+        self.assertEqual(res_ext.status_code, 200)
+        self.assertEqual(res_ext.headers.get("content-type"), "audio/wav")
+        self.assertEqual(res_plain.content, res_ext.content)
+
+        # Verify normalized audio is 16kHz mono 16-bit
+        with wave.open(io.BytesIO(res_plain.content), "rb") as check_wf:
+            self.assertEqual(check_wf.getframerate(), 16000)
+            self.assertEqual(check_wf.getnchannels(), 1)
+            self.assertEqual(check_wf.getsampwidth(), 2)
+
+        # 2. Test Create Schedule API with repeat count (loop_count = 4)
+        sched_res = self.client.post("/api/schedules", json={
+            "name": "Evening Motor Alert",
+            "to_number": "+919876543210",
+            "schedule_type": "once",
+            "scheduled_datetime": (datetime.now() + timedelta(hours=2)).isoformat(),
+            "audio_id": aid,
+            "loop_count": 4
+        })
+        self.assertEqual(sched_res.status_code, 200)
+        sched_id = sched_res.json()["schedule_id"]
+
+        schedule = get_schedule(sched_id)
+        self.assertEqual(schedule["loop_count"], 4)
+
+        # 3. Test Answer Webhook automatically reads loop_count from schedule
+        ans_resp = self.client.get(f"/webhook/answer?schedule_id={sched_id}&audio_id={aid}")
+        self.assertEqual(ans_resp.status_code, 200)
+        self.assertIn('loop="4"', ans_resp.text)
+        self.assertIn(f"/audio/{aid}.wav", ans_resp.text)
+        self.assertIn("<Hangup/>", ans_resp.text)
+
+        # 4. Test Instant Call API with custom repeat count (loop_count = 3)
+        # Even if unconfigured, it should process payload and attempt dialing
+        inst_res = self.client.post("/api/calls/instant", json={
+            "to_number": "+919876543210",
+            "audio_id": aid,
+            "loop_count": 3
+        })
+        self.assertEqual(inst_res.status_code, 200)
 
 if __name__ == "__main__":
     unittest.main()

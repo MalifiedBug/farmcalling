@@ -260,6 +260,7 @@ def trigger_call_now(
     auth_id = settings.get("auth_id", "").strip()
     auth_token = settings.get("auth_token", "").strip()
     caller_id = settings.get("caller_id", "").strip()
+    loop_count = max(1, min(int(loop_count or 1), 10))
 
     base_url = (base_url_override or "").strip().rstrip("/")
     if not base_url or "example.com" in base_url or "localhost" in base_url or "127.0.0.1" in base_url:

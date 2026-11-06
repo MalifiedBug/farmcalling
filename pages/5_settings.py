@@ -100,7 +100,7 @@ with tab_vobiz:
 
     st.markdown("---")
     st.markdown("#### Test Vobiz Connection")
-    if st.button("🔌 Verify Connection & Fetch Account Info", use_container_width=True):
+    if st.button("🔌 Verify Connection & Fetch Account Info", width="stretch"):
         client = VobizClient(
             current_settings.get("auth_id", ""),
             current_settings.get("auth_token", "")

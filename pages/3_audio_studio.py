@@ -128,11 +128,14 @@ else:
                     st.caption(f"Duration: `{asset['duration_seconds']}s`")
 
             with col_player:
+                pub_url = get_asset_url(asset["id"], base_url)
                 if asset["source_type"] == "tts":
                     st.markdown(f"🗣️ *\"{asset.get('tts_text', '')}\"*")
+                elif asset.get("audio_bytes"):
+                    st.audio(asset["audio_bytes"], format=asset.get("mime_type", "audio/wav"))
+                    st.caption(f"Vobiz Stream URL: `{pub_url}`")
                 elif os.path.exists(asset.get("filepath", "")):
                     st.audio(asset["filepath"])
-                    pub_url = get_asset_url(asset["id"], base_url)
                     st.caption(f"Vobiz Stream URL: `{pub_url}`")
                 else:
                     st.caption("⚠️ Audio file not found on local disk.")
