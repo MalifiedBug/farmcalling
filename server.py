@@ -360,65 +360,29 @@ async def hangup_webhook(request: Request):
 @app.get("/cron")
 def vercel_cron_handler():
     """
-    Invoked periodically by Vercel Cron to process active schedules.
+    Invoked periodically by Vercel Cron or external runner to process active schedules.
+    Evaluates schedules with high precision using Indian Standard Time (Asia/Kolkata, UTC+5:30).
     """
-    from scheduler import execute_call_job
+    from scheduler import execute_call_job, is_schedule_due_now
+    import pytz
+    tz = pytz.timezone("Asia/Kolkata")
+    now_ist = datetime.now(tz)
     schedules = get_schedules(status_filter="active")
-    now = datetime.now()
     triggered = []
 
     for s in schedules:
-        sched_type = s["schedule_type"]
-        is_due = False
-
-        if sched_type == "once":
-            dt_str = s.get("scheduled_datetime")
-            if dt_str:
-                try:
-                    dt = datetime.fromisoformat(dt_str)
-                    if dt <= now:
-                        is_due = True
-                except Exception:
-                    pass
-
-        elif sched_type == "interval":
-            val = int(s.get("interval_value") or 30)
-            unit = s.get("interval_unit") or "minutes"
-            last_run = s.get("last_run_at")
-            if not last_run:
-                is_due = True
-            else:
-                try:
-                    last_dt = datetime.fromisoformat(last_run)
-                    delta_seconds = (now - last_dt).total_seconds()
-                    interval_sec = val * (60 if unit == "minutes" else (3600 if unit == "hours" else 86400))
-                    if delta_seconds >= interval_sec:
-                        is_due = True
-                except Exception:
-                    pass
-
-        elif sched_type == "cron":
-            cron_expr = s.get("cron_expression", "")
-            parts = cron_expr.strip().split()
-            if len(parts) == 5:
-                try:
-                    t_min = int(parts[0]) if parts[0] != "*" else None
-                    t_hr = int(parts[1]) if parts[1] != "*" else None
-                    if (t_min is None or t_min == now.minute) and (t_hr is None or t_hr == now.hour):
-                        last_run = s.get("last_run_at", "")
-                        if not last_run or last_run[:16] != now.isoformat()[:16]:
-                            is_due = True
-                except Exception:
-                    pass
-
-        if is_due:
-            logger.info(f"Vercel Cron executing due schedule: {s['name']} ({s['id']})")
-            execute_call_job(s["id"])
-            triggered.append(s["id"])
+        try:
+            if is_schedule_due_now(s):
+                logger.info(f"Cron executing due schedule in IST: {s['name']} ({s['id']})")
+                execute_call_job(s["id"])
+                triggered.append(s["id"])
+        except Exception as e:
+            logger.error(f"Error evaluating schedule {s.get('id')}: {e}")
 
     return {
         "status": "success",
-        "timestamp": now.isoformat(),
+        "current_time_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "timezone": "Asia/Kolkata (IST)",
         "total_active_schedules": len(schedules),
         "triggered_count": len(triggered),
         "triggered_ids": triggered
@@ -483,10 +447,11 @@ class CreateSchedulePayload(BaseModel):
 
 @app.post("/api/schedules")
 def api_create_schedule(payload: CreateSchedulePayload):
+    from scheduler import register_schedule_job, compute_next_run_ist
     loops = max(1, min(int(payload.loop_count or 1), 10))
     sched_id = create_schedule(
-        name=payload.name,
-        to_number=payload.to_number,
+        name=payload.name.strip(),
+        to_number=payload.to_number.strip(),
         schedule_type=payload.schedule_type,
         scheduled_datetime=payload.scheduled_datetime,
         interval_value=payload.interval_value,
@@ -495,11 +460,27 @@ def api_create_schedule(payload: CreateSchedulePayload):
         audio_id=payload.audio_id,
         play_mode=payload.play_mode or "audio",
         tts_message=payload.tts_message,
-        loop_count=loops,
-        next_run_at=payload.scheduled_datetime
+        loop_count=loops
     )
-    return {"success": True, "schedule_id": sched_id}
-    return {"success": True, "schedule_id": sched_id}
+
+    next_run_ist = register_schedule_job(sched_id)
+    if not next_run_ist:
+        next_run_ist = compute_next_run_ist(
+            schedule_type=payload.schedule_type,
+            cron_expression=payload.cron_expression,
+            scheduled_datetime=payload.scheduled_datetime,
+            interval_value=payload.interval_value,
+            interval_unit=payload.interval_unit
+        )
+
+    return {
+        "success": True,
+        "schedule_id": sched_id,
+        "status": "active",
+        "next_run_at": next_run_ist,
+        "timezone": "Asia/Kolkata (IST)",
+        "message": f"Schedule '{payload.name}' activated in IST! Next call: {next_run_ist or 'Scheduled'}"
+    }
 
 @app.delete("/api/schedules/{schedule_id}")
 def api_delete_schedule(schedule_id: str):

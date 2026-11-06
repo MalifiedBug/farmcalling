@@ -21,14 +21,30 @@ from scheduler import register_schedule_job, execute_call_job
 st.title("⏱️ Automated Call Scheduling")
 st.caption("Schedule voice calls on specific dates, recurring intervals, or daily timetables.")
 
-settings = get_settings()
-tz_str = settings.get("timezone", "Asia/Kolkata")
-try:
-    tz = pytz.timezone(tz_str)
-except Exception:
-    tz = pytz.timezone("Asia/Kolkata")
+# Data caching helpers for blazing fast UX
+@st.cache_data(ttl=60)
+def fetch_audio_assets():
+    return get_audio_assets()
 
+@st.cache_data(ttl=60)
+def fetch_schedules():
+    return get_schedules()
+
+settings = get_settings()
+tz_str = "Asia/Kolkata"
+tz = pytz.timezone(tz_str)
 now_tz = datetime.now(tz)
+
+# Persistent activation alert banner
+if "activation_banner" in st.session_state:
+    b = st.session_state.pop("activation_banner")
+    st.success(
+        f"🎉 **Campaign Activated Successfully (IST)!**  \n"
+        f"• **Campaign:** **{b['name']}**  \n"
+        f"• **Recipient:** `{b['to']}` | **Type:** `{b['type']}` | **Repeat Count:** `{b['loops']}x`  \n"
+        f"• **Next Scheduled Dial:** `{str(b['next_run']).replace('T', ' ')[:19]} IST` *(Asia/Kolkata / UTC+5:30)*",
+        icon="✅"
+    )
 
 # Section 1: Create New Schedule
 with st.expander("➕ Create New Call Schedule", expanded=True):
@@ -64,9 +80,9 @@ with st.expander("➕ Create New Call Schedule", expanded=True):
                 default_time = (now_tz + timedelta(minutes=5)).time()
                 sched_time = st.time_input("Target Time", value=default_time)
             
-            combined_dt = datetime.combine(sched_date, sched_time)
+            combined_dt = tz.localize(datetime.combine(sched_date, sched_time))
             scheduled_dt_str = combined_dt.isoformat()
-            st.info(f"📅 Call will execute once on **{sched_date.strftime('%A, %b %d %Y')} at {sched_time.strftime('%I:%M %p')}** ({tz_str})")
+            st.info(f"📅 Call will execute once on **{sched_date.strftime('%A, %b %d %Y')} at {sched_time.strftime('%I:%M %p')} IST** (Asia/Kolkata)")
 
         elif schedule_type == "Repeating Interval (Every X time)":
             c_val, c_unit = st.columns(2)
@@ -168,7 +184,7 @@ with st.expander("➕ Create New Call Schedule", expanded=True):
             st.success(f"⏰ **Active Schedule:** Fires {cron_human_desc}  \n`Cron Expression: {cron_expr}`")
 
         st.markdown("#### 🎵 Audio Prompt & Playback Flow")
-        audio_assets = get_audio_assets()
+        audio_assets = fetch_audio_assets()
         audio_map = {"[None / System Default]": ""}
         for a in audio_assets:
             label = f"{a['name']} ({a['source_type'].capitalize()})"
@@ -194,7 +210,7 @@ with st.expander("➕ Create New Call Schedule", expanded=True):
         with col_note:
             st.caption("ℹ️ Vobiz will play the chosen audio consecutively for the set repeat count, then hang up as per VobizXML `<Hangup/>` specifications.")
 
-        submitted = st.form_submit_button("✨ Save & Activate Schedule", type="primary", width="stretch")
+        submitted = st.form_submit_button("✨ Save & Activate Schedule (IST)", type="primary", width="stretch")
 
     if submitted:
         if not schedule_name.strip() or not to_number.strip():
@@ -203,30 +219,40 @@ with st.expander("➕ Create New Call Schedule", expanded=True):
             s_type_key = "once" if "One-Off" in schedule_type else ("interval" if "Interval" in schedule_type else "cron")
             p_mode_key = "tts" if "TTS" in play_mode else "audio"
 
-            sched_id = create_schedule(
-                name=schedule_name.strip(),
-                to_number=to_number.strip(),
-                schedule_type=s_type_key,
-                scheduled_datetime=scheduled_dt_str,
-                interval_value=interval_val,
-                interval_unit=interval_unit,
-                cron_expression=cron_expr,
-                audio_id=selected_audio_id,
-                play_mode=p_mode_key,
-                tts_message=tts_message,
-                loop_count=loops,
-                next_run_at=scheduled_dt_str
-            )
-            # Register in APScheduler
-            register_schedule_job(sched_id)
-            st.success(f"Schedule '{schedule_name}' created and activated successfully!")
+            with st.status("🚀 Saving & Activating Campaign in Indian Standard Time (IST)...", expanded=True) as status:
+                st.write(f"Configuring schedule `{schedule_name}` in Asia/Kolkata timezone...")
+                sched_id = create_schedule(
+                    name=schedule_name.strip(),
+                    to_number=to_number.strip(),
+                    schedule_type=s_type_key,
+                    scheduled_datetime=scheduled_dt_str,
+                    interval_value=interval_val,
+                    interval_unit=interval_unit,
+                    cron_expression=cron_expr,
+                    audio_id=selected_audio_id,
+                    play_mode=p_mode_key,
+                    tts_message=tts_message,
+                    loop_count=loops
+                )
+                st.write("Activating schedule in IST telephony engine...")
+                next_run_ist = register_schedule_job(sched_id)
+                status.update(label=f"Campaign '{schedule_name}' Activated in IST!", state="complete", expanded=False)
+
+            st.session_state["activation_banner"] = {
+                "name": schedule_name.strip(),
+                "to": to_number.strip(),
+                "next_run": next_run_ist or scheduled_dt_str or "Scheduled",
+                "type": s_type_key.upper(),
+                "loops": loops
+            }
+            st.cache_data.clear()
             st.rerun()
 
 # Section 2: Manage Existing Schedules
 st.markdown("---")
 st.subheader("📋 Scheduled Campaigns")
 
-schedules = get_schedules()
+schedules = fetch_schedules()
 
 if not schedules:
     st.info("No schedules found. Create one above to get started.")
@@ -238,23 +264,25 @@ else:
                 st.markdown(f"### {s['name']}")
                 st.caption(f"📞 Destination: `{s['to_number']}` | Type: **{s['schedule_type'].upper()}**")
             with status_col:
-                badge = "🟢 ACTIVE" if s["status"] == "active" else ("⏸️ PAUSED" if s["status"] == "paused" else "🏁 COMPLETED")
+                badge = "🟢 ACTIVE (IST)" if s["status"] == "active" else ("⏸️ PAUSED" if s["status"] == "paused" else "🏁 COMPLETED")
                 st.markdown(f"**Status:** {badge}")
                 st.caption(f"Total Runs: **{s['total_runs']}**")
 
             det_col1, det_col2, det_col3 = st.columns(3)
             with det_col1:
                 if s["schedule_type"] == "once":
-                    st.write(f"📅 **Run At:** {s.get('scheduled_datetime', 'N/A').replace('T', ' ')}")
+                    st.write(f"📅 **Target (IST):** `{s.get('scheduled_datetime', 'N/A')[:19].replace('T', ' ')}`")
                 elif s["schedule_type"] == "interval":
-                    st.write(f"🔄 **Every:** {s.get('interval_value')} {s.get('interval_unit')}")
+                    st.write(f"🔄 **Cadence:** Every {s.get('interval_value')} {s.get('interval_unit')}")
                 else:
-                    st.write(f"⏰ **Cron:** `{s.get('cron_expression')}`")
+                    st.write(f"⏰ **Cron (IST):** `{s.get('cron_expression')}`")
             with det_col2:
-                st.write(f"🎧 **Audio:** `{s.get('play_mode', 'audio').upper()}` (loops: {s.get('loop_count', 1)})")
+                next_run_disp = s.get("next_run_at")
+                st.write(f"⏳ **Next Run (IST):** `{next_run_disp[:19].replace('T', ' ') if next_run_disp else 'Active'}`")
+                st.caption(f"Audio: `{s.get('play_mode', 'audio').upper()}` ({s.get('loop_count', 1)}x)")
             with det_col3:
                 last_run = s.get("last_run_at")
-                st.write(f"🕒 **Last Run:** {last_run[:19].replace('T', ' ') if last_run else 'Never'}")
+                st.write(f"🕒 **Last Run (IST):** {last_run[:19].replace('T', ' ') if last_run else 'Never'}")
 
             # Actions Row
             act1, act2, act3, _ = st.columns([1, 1, 1, 3])
@@ -262,21 +290,25 @@ else:
                 if st.button("⚡ Run Now", key=f"run_{s['id']}"):
                     with st.spinner("Executing scheduled call..."):
                         execute_call_job(s["id"])
+                    st.cache_data.clear()
                     st.success("Call trigger sent!")
                     st.rerun()
             with act2:
                 if s["status"] == "active":
                     if st.button("⏸️ Pause", key=f"pause_{s['id']}"):
                         update_schedule_status(s["id"], "paused")
+                        st.cache_data.clear()
                         st.rerun()
                 else:
                     if st.button("▶️ Resume", key=f"resume_{s['id']}"):
                         update_schedule_status(s["id"], "active")
                         register_schedule_job(s["id"])
+                        st.cache_data.clear()
                         st.rerun()
             with act3:
                 if st.button("🗑️ Delete", key=f"del_{s['id']}"):
                     delete_schedule(s["id"])
+                    st.cache_data.clear()
                     st.success("Deleted schedule.")
                     st.rerun()
 

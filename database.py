@@ -151,15 +151,16 @@ _pg_conn = None
 
 def get_db_mode() -> str:
     """Determines active database backend ('postgres' or 'sqlite')."""
-    global _db_mode
+    global _db_mode, _pg_conn
     if _db_mode is not None:
         return _db_mode
 
     url = get_database_url()
     if url and psycopg2 is not None and (url.startswith("postgres://") or url.startswith("postgresql://")):
         try:
-            test_conn = psycopg2.connect(url, connect_timeout=10)
-            test_conn.close()
+            test_conn = psycopg2.connect(url, connect_timeout=8)
+            test_conn.autocommit = True
+            _pg_conn = test_conn
             _db_mode = "postgres"
             logger.info("Database initialized: connected to Supabase PostgreSQL (Persistent Storage).")
             return _db_mode
@@ -624,8 +625,24 @@ def create_schedule(
     loop_count: int = 1,
     next_run_at: Optional[str] = None
 ) -> str:
+    import pytz
+    ist_tz = pytz.timezone("Asia/Kolkata")
+    now_ist = datetime.now(ist_tz).isoformat()
     schedule_id = str(uuid.uuid4())
-    now = datetime.now().isoformat()
+
+    if not next_run_at:
+        try:
+            from scheduler import compute_next_run_ist
+            next_run_at = compute_next_run_ist(
+                schedule_type=schedule_type,
+                cron_expression=cron_expression,
+                scheduled_datetime=scheduled_datetime,
+                interval_value=interval_value,
+                interval_unit=interval_unit
+            )
+        except Exception:
+            next_run_at = scheduled_datetime
+
     db_execute("""
         INSERT INTO schedules (
             id, name, to_number, schedule_type, scheduled_datetime,
@@ -635,7 +652,7 @@ def create_schedule(
     """, (
         schedule_id, name, to_number, schedule_type, scheduled_datetime,
         interval_value, interval_unit, cron_expression, audio_id,
-        play_mode, tts_message, loop_count, next_run_at, now
+        play_mode, tts_message, loop_count, next_run_at, now_ist
     ))
     return schedule_id
 

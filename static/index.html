@@ -169,7 +169,10 @@
           </div>
         </div>
 
-        <button onclick="saveSchedule()" class="btn-primary px-6 py-2 rounded-lg text-sm font-medium">Save & Activate Schedule</button>
+        <div id="sched-feedback" class="hidden rounded-lg p-3 text-xs mb-3 font-medium"></div>
+        <button id="btn-save-sched" onclick="saveSchedule()" class="btn-primary px-6 py-2 rounded-lg text-sm font-medium flex items-center justify-center">
+          <i data-feather="check-circle" class="w-4 h-4 mr-2"></i> Save & Activate Schedule (IST)
+        </button>
       </div>
 
       <div class="card p-6 rounded-xl space-y-4">
@@ -683,13 +686,27 @@
     updateSchedInputs();
 
     async function saveSchedule() {
+      const btn = document.getElementById('btn-save-sched');
+      const feedback = document.getElementById('sched-feedback');
       const name = document.getElementById('sched-name').value.trim();
       const to = document.getElementById('sched-to').value.trim();
       const type = document.getElementById('sched-type').value;
       const audioId = document.getElementById('sched-audio-select').value;
       const loop = parseInt(document.getElementById('sched-loop').value) || 1;
 
-      if (!name || !to) return alert('Please enter campaign name and recipient number.');
+      if (!name || !to) {
+        if (feedback) {
+          feedback.className = 'rounded-lg p-3 text-xs mb-3 font-medium bg-rose-950/80 border border-rose-600 text-rose-200 block';
+          feedback.innerHTML = '⚠️ Please enter both Campaign Name and Destination Phone Number.';
+        }
+        return;
+      }
+
+      // Show immediate activating spinner
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="inline-block animate-spin mr-2">⏳</span> Activating in IST...';
+      }
 
       let body = { name, to_number: to, schedule_type: type, audio_id: audioId, loop_count: loop };
       if (type === 'once') {
@@ -701,14 +718,39 @@
         body.cron_expression = document.getElementById('sched-cron').value;
       }
 
-      const res = await fetch('/api/schedules', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body)
-      });
-      if (res.ok) {
-        alert('Schedule created successfully!');
-        loadSchedules();
+      try {
+        const res = await fetch('/api/schedules', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (feedback) {
+            feedback.className = 'rounded-lg p-3 text-xs mb-3 font-medium bg-emerald-950/80 border border-emerald-600 text-emerald-200 block';
+            const nextRunTxt = data.next_run_at ? ` | Next Dial: <b>${data.next_run_at.replace('T', ' ').slice(0, 19)} IST</b>` : '';
+            feedback.innerHTML = `✅ <b>Campaign Activated:</b> "${name}" is active on Indian Standard Time (IST)${nextRunTxt}`;
+          }
+          document.getElementById('sched-name').value = '';
+          document.getElementById('sched-to').value = '';
+          loadSchedules();
+        } else {
+          if (feedback) {
+            feedback.className = 'rounded-lg p-3 text-xs mb-3 font-medium bg-rose-950/80 border border-rose-600 text-rose-200 block';
+            feedback.innerHTML = `❌ Failed to activate: ${data.message || 'Unknown server error'}`;
+          }
+        }
+      } catch (err) {
+        if (feedback) {
+          feedback.className = 'rounded-lg p-3 text-xs mb-3 font-medium bg-rose-950/80 border border-rose-600 text-rose-200 block';
+          feedback.innerHTML = `❌ Network Error: ${err.message}`;
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<i data-feather="check-circle" class="w-4 h-4 mr-2"></i> Save & Activate Schedule (IST)';
+          if (window.feather) feather.replace();
+        }
       }
     }
 
@@ -727,7 +769,8 @@
               <th class="py-2">Name</th>
               <th>Destination</th>
               <th>Type</th>
-              <th>Timing</th>
+              <th>Cadence (IST)</th>
+              <th>Next Run (IST)</th>
               <th>Repeats</th>
               <th>Status</th>
               <th>Runs</th>
@@ -735,21 +778,25 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-800">
-            ${data.map(s => `
+            ${data.map(s => {
+              const timing = s.schedule_type === 'once' ? (s.scheduled_datetime || '').replace('T', ' ').slice(0, 19) : (s.schedule_type === 'interval' ? `Every ${s.interval_value} ${s.interval_unit}` : s.cron_expression);
+              const nextRun = s.next_run_at ? s.next_run_at.replace('T', ' ').slice(0, 19) + ' IST' : (s.status === 'active' ? 'Active' : 'N/A');
+              return `
               <tr>
                 <td class="py-2.5 font-medium text-white">${s.name}</td>
                 <td><code>${s.to_number}</code></td>
                 <td><span class="uppercase font-mono">${s.schedule_type}</span></td>
-                <td>${s.schedule_type === 'once' ? (s.scheduled_datetime || '').replace('T', ' ') : (s.schedule_type === 'interval' ? `Every ${s.interval_value} ${s.interval_unit}` : s.cron_expression)}</td>
+                <td><span class="text-gray-300">${timing}</span></td>
+                <td><span class="font-mono text-emerald-400 font-semibold">${nextRun}</span></td>
                 <td><span class="font-bold text-blue-400">${s.loop_count || 1}x</span></td>
-                <td><span class="px-2 py-0.5 rounded text-[10px] ${s.status === 'active' ? 'bg-emerald-950 text-emerald-400' : 'bg-gray-800 text-gray-400'}">${s.status}</span></td>
+                <td><span class="px-2 py-0.5 rounded text-[10px] ${s.status === 'active' ? 'bg-emerald-950 text-emerald-400' : 'bg-gray-800 text-gray-400'}">${s.status.toUpperCase()}</span></td>
                 <td>${s.total_runs}</td>
                 <td>
                   <button onclick="runScheduleNow('${s.id}')" class="text-blue-400 hover:underline mr-2">Run</button>
                   <button onclick="deleteSchedule('${s.id}')" class="text-rose-400 hover:underline">Delete</button>
                 </td>
               </tr>
-            `).join('')}
+            `}).join('')}
           </tbody>
         </table>
       `;
