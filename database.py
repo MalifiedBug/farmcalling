@@ -381,6 +381,24 @@ def init_db():
                 """)
             except Exception:
                 pass
+
+            # Ensure 24/7 cloud cron engine via Supabase pg_cron + pg_net
+            try:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_net;")
+                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_cron;")
+                cur.execute("SELECT jobid FROM cron.job WHERE jobname = 'farmcalling-minute-heartbeat' LIMIT 1;")
+                if not cur.fetchone():
+                    target_url = "https://farmcalling2.vercel.app/api/cron"
+                    cur.execute("""
+                        SELECT cron.schedule(
+                            'farmcalling-minute-heartbeat',
+                            '* * * * *',
+                            %s
+                        );
+                    """, (f"SELECT net.http_get(url := '{target_url}', timeout_milliseconds := 15000);",))
+                    logger.info("Successfully provisioned 24/7 cloud heartbeat job in Supabase pg_cron.")
+            except Exception as e:
+                logger.warning(f"Note: pg_cron setup skipped or not supported: {e}")
     else:
         conn = get_sqlite_conn()
         with conn:
@@ -582,6 +600,42 @@ def update_settings(updates: Dict[str, Any]):
             "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, str(val))
         )
+
+def ensure_supabase_cron_heartbeat(webhook_base_url: Optional[str] = None) -> bool:
+    """
+    Ensures pg_cron and pg_net are enabled in Supabase PostgreSQL,
+    and schedules a 1-minute recurring HTTP heartbeat to /api/cron.
+    Runs 24/7 in the cloud with zero dependencies on browser or local machine.
+    """
+    if not is_postgres():
+        return False
+    try:
+        url = (webhook_base_url or os.environ.get("WEBHOOK_BASE_URL") or "https://farmcalling2.vercel.app").rstrip("/")
+        cron_endpoint = f"{url}/api/cron"
+
+        db_execute("CREATE EXTENSION IF NOT EXISTS pg_net;")
+        db_execute("CREATE EXTENSION IF NOT EXISTS pg_cron;")
+
+        job = db_execute("SELECT jobid, command FROM cron.job WHERE jobname = 'farmcalling-minute-heartbeat' LIMIT 1", fetch="one")
+        expected_cmd = f"SELECT net.http_get(url := '{cron_endpoint}', timeout_milliseconds := 15000);"
+
+        if not job or job.get("command") != expected_cmd:
+            try:
+                db_execute("SELECT cron.unschedule('farmcalling-minute-heartbeat')", fetch="none")
+            except Exception:
+                pass
+            db_execute("""
+                SELECT cron.schedule(
+                    'farmcalling-minute-heartbeat',
+                    '* * * * *',
+                    ?
+                )
+            """, (expected_cmd,), fetch="none")
+            logger.info(f"Registered 24/7 Supabase pg_cron heartbeat for {cron_endpoint}")
+        return True
+    except Exception as e:
+        logger.warning(f"Note: Supabase pg_cron setup skipped or not supported: {e}")
+        return False
 
 # --- Audio Assets Helpers ---
 

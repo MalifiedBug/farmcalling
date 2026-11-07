@@ -197,6 +197,14 @@ class TestSupabasePersistence(unittest.TestCase):
             delete_audio_asset(aid)
             update_settings({"default_audio_id": "16cf3bdb-54e6-47e4-bd78-55fce499b6ef"})
 
+    def test_07_supabase_pg_cron_heartbeat_active(self):
+        """Verifies 24/7 autonomous pg_cron heartbeat job is scheduled and active in Supabase."""
+        job = db_execute("SELECT jobid, jobname, schedule, active, command FROM cron.job WHERE jobname = 'farmcalling-minute-heartbeat' LIMIT 1", fetch="one")
+        self.assertIsNotNone(job, "farmcalling-minute-heartbeat job not found in Supabase cron.job table")
+        self.assertEqual(job["schedule"], "* * * * *")
+        self.assertTrue(job["active"])
+        self.assertIn("https://farmcalling2.vercel.app/api/cron", job["command"])
+
 if __name__ == "__main__":
     unittest.main()
 

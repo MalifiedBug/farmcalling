@@ -398,6 +398,22 @@ with tab_db:
         st.error(f"Error querying table telemetry: {ex}")
 
     st.markdown("---")
+    st.markdown("#### ⚡ 24/7 Autonomous Cloud Engine (`pg_cron` + `pg_net`)")
+    st.caption("Ensures scheduled calls trigger automatically even when your browser, app, or computer is closed.")
+
+    last_ping = settings.get("last_cron_ping_at", "Never")
+    cron_endpoint = f"{settings.get('webhook_base_url', 'https://farmcalling2.vercel.app').rstrip('/')}/api/cron"
+
+    c_cron1, c_cron2 = st.columns([1.5, 1.5])
+    with c_cron1:
+        st.write("• **Cloud Cron Engine:** Supabase Native (`pg_cron` + `pg_net`)")
+        st.write("• **Heartbeat Cadence:** Every 60 seconds (`* * * * *`)")
+        st.write(f"• **Target Webhook URL:** `{cron_endpoint}`")
+    with c_cron2:
+        st.write(f"• **Last Cloud Heartbeat:** `{last_ping.replace('T', ' ')[:19] if last_ping else 'Never'} IST`")
+        st.write("• **Client Independence:** Runs 24/7 in AWS cloud with zero browser dependency")
+
+    st.markdown("---")
     if st.button("🔄 Test Connection & Re-sync Tables", type="primary"):
         with st.status("Verifying Supabase PostgreSQL connection...", expanded=True) as status_box:
             try:

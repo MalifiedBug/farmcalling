@@ -48,6 +48,35 @@ if "activation_banner" in st.session_state:
         icon="✅"
     )
 
+# 24/7 Cloud Background Execution Telemetry
+last_ping = settings.get("last_cron_ping_at")
+is_cloud_active = False
+diff_mins = None
+if last_ping:
+    try:
+        last_dt = datetime.fromisoformat(str(last_ping))
+        if last_dt.tzinfo is None:
+            last_dt = tz.localize(last_dt)
+        diff_s = (now_tz - last_dt).total_seconds()
+        is_cloud_active = diff_s < 180
+        diff_mins = int(diff_s // 60)
+    except Exception:
+        pass
+
+if is_cloud_active:
+    st.info(
+        "⚡ **24/7 Cloud Background Dialer Active**: Powered by Supabase `pg_cron` & `pg_net`. "
+        "Your scheduled calls trigger automatically in Indian Standard Time (IST) even when this application, your browser, or your computer is closed! "
+        f"*(Last cloud heartbeat: {diff_mins}m ago)*",
+        icon="🌐"
+    )
+else:
+    st.warning(
+        "⚠️ **Cloud Heartbeat Idle**: No recent ping recorded within the last 3 minutes. "
+        "Scheduled calls trigger when the dashboard is open or when `/api/cron` receives an external ping.",
+        icon="⏰"
+    )
+
 # Section 1: Create New Schedule
 with st.expander("➕ Create New Call Schedule", expanded=True):
     with st.form("new_schedule_form"):
